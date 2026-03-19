@@ -1,0 +1,68 @@
+name: API CI
+
+on:
+  push:
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-ci.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-ci.yml"
+
+jobs:
+  pytest:
+    name: Pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
+
+  postgres-smoke:
+    name: PostgreSQL Full Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Ensure docker compose is available
+        run: docker compose version
+
+      - name: Run PostgreSQL full check
+        env:
+          PYTHONPATH: .
+          PYTHON_BIN: python
+          LLM_PROVIDER: stub
+          EXECUTION_BACKEND: inline
+        run: ./scripts/postgres_full_check.sh

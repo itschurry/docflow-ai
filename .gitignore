@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+.env
+
+# OS
+.DS_Store
+
+# Build artifacts
+*.log
+
+# Local runtime artifacts
+apps/api/storage/
+apps/api/*.db
