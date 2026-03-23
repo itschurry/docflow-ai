@@ -118,6 +118,10 @@ class ConversationService:
         telegram_message_id: int | None = None,
         reply_to_message_id: int | None = None,
         rendered_text: str = "",
+        speaker_role: str | None = None,
+        speaker_identity: str | None = None,
+        speaker_bot_username: str | None = None,
+        is_agent_message: bool = False,
     ) -> MessageModel:
         msg = MessageModel(
             conversation_id=conversation_id,
@@ -127,6 +131,10 @@ class ConversationService:
             raw_text=raw_text,
             rendered_text=rendered_text or raw_text,
             message_type=message_type,
+            speaker_role=speaker_role,
+            speaker_identity=speaker_identity,
+            speaker_bot_username=speaker_bot_username,
+            is_agent_message=is_agent_message,
         )
         self.db.add(msg)
         self.db.flush()
@@ -169,6 +177,7 @@ class ConversationService:
         trigger_message_id: uuid.UUID | None = None,
         provider: str | None = None,
         model: str | None = None,
+        speaker_identity: str | None = None,
     ) -> AgentRunModel:
         run = AgentRunModel(
             conversation_id=conversation_id,
@@ -177,6 +186,7 @@ class ConversationService:
             provider=provider,
             model=model,
             status="queued",
+            speaker_identity=speaker_identity,
         )
         self.db.add(run)
         self.db.flush()
@@ -195,6 +205,7 @@ class ConversationService:
         output: str,
         input_snapshot: str = "",
         error: str | None = None,
+        output_message_id: int | None = None,
     ) -> AgentRunModel | None:
         run = self.db.get(AgentRunModel, run_id)
         if run:
@@ -203,6 +214,8 @@ class ConversationService:
             run.output_snapshot = output
             run.input_snapshot = input_snapshot
             run.error = error
+            if output_message_id is not None:
+                run.output_message_id = output_message_id
         return run
 
     def list_agent_runs(

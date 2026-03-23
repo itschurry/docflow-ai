@@ -56,6 +56,12 @@ from app.orchestrator.engine import orchestrator
 router = APIRouter()
 
 
+@router.get("/", include_in_schema=False)
+def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
+
+
 def _secret_hash(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
