@@ -43,6 +43,22 @@ logging.basicConfig(
 logger = logging.getLogger("polling")
 
 
+async def _skip_pending(client: httpx.AsyncClient, bot: BotIdentity) -> int:
+    """시작 시 Telegram 큐에 쌓인 미처리 메시지를 건너뜀. 최신 update_id+1 반환."""
+    url = f"https://api.telegram.org/bot{bot.token}/getUpdates"
+    try:
+        resp = await client.get(url, params={"limit": 100, "timeout": 3}, timeout=5)
+        updates = resp.json().get("result", [])
+        if updates:
+            latest_id = updates[-1]["update_id"]
+            # offset = latest+1 으로 ACK → 서버에서 제거
+            await client.get(url, params={"offset": latest_id + 1, "limit": 1, "timeout": 0}, timeout=5)
+            return latest_id + 1
+    except Exception as e:
+        logger.warning("[%s] skip_pending 실패: %s", bot.username, e)
+    return 0
+
+
 async def get_updates(
     client: httpx.AsyncClient,
     bot: BotIdentity,
@@ -84,7 +100,10 @@ async def poll_bot(bot: BotIdentity) -> None:
             print(f"  ❌ {bot.key} 연결 실패: {e}")
             return
 
-        offset = 0
+        # 시작 시 미처리 이전 메시지 스킵 (쌓인 큐 무시)
+        offset = await _skip_pending(client, bot)
+        logger.info("[%s] 시작 offset=%s (이전 메시지 스킵)", bot.username, offset)
+
         while True:
             updates = await get_updates(client, bot, offset)
             for update in updates:
