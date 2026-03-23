@@ -34,5 +34,22 @@ class Settings:
     review_required_threshold: int = int(
         os.getenv("REVIEW_REQUIRED_THRESHOLD", "90"))
 
+    # Telegram
+    telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    telegram_allowed_chat_ids: list[int] = [
+        int(x.strip())
+        for x in os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+        if x.strip()
+    ]
+    telegram_webhook_url: str = os.getenv("TELEGRAM_WEBHOOK_URL", "")
+    telegram_webhook_secret: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+
+    # Orchestrator
+    agent_config_path: str = os.getenv("AGENT_CONFIG_PATH", "./config/agents.yaml")
+    orchestrator_default_mode: str = os.getenv("ORCHESTRATOR_DEFAULT_MODE", "pipeline")
+    orchestrator_max_turns: int = int(os.getenv("ORCHESTRATOR_MAX_TURNS", "6"))
+    orchestrator_auto_summary: bool = os.getenv(
+        "ORCHESTRATOR_AUTO_SUMMARY", "true").lower() == "true"
+
 
 settings = Settings()

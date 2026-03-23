@@ -6,6 +6,7 @@ from app.api.routes import router
 from app.core.config import settings
 from app.core.database import Base, engine
 from app import models  # noqa: F401
+from app import conversation_models  # noqa: F401
 
 
 @asynccontextmanager

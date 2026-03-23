@@ -8,7 +8,7 @@ from uuid import UUID
 
 import asyncio
 
-from fastapi import APIRouter, Depends, File, HTTPException, Header, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,6 +44,14 @@ from app.services.document_parser import extract_text
 from app.services.job_dispatcher import dispatch_job
 from app.services.llm_router import get_llm_provider
 from app.services.planner_agent import PlannerAgent
+from app.adapters.telegram.handlers import process_update
+from app.conversations.service import ConversationService
+from app.conversations.serializer import (
+    serialize_agent_run,
+    serialize_conversation,
+    serialize_message,
+)
+from app.orchestrator.engine import orchestrator
 
 router = APIRouter()
 
@@ -670,3 +678,108 @@ def list_replay_audit(
             continue
 
     return ReplayAuditListResponse(items=items)
+
+
+# ── Telegram Webhook ──────────────────────────────────────────────────────────
+
+@router.post("/telegram/webhook", status_code=200)
+async def telegram_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+):
+    """Receive Telegram webhook updates."""
+    secret = settings.telegram_webhook_secret
+    if secret and x_telegram_bot_api_secret_token != secret:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    update = await request.json()
+    background_tasks.add_task(process_update, update, db)
+    return {"ok": True}
+
+
+@router.post("/telegram/setup-webhook", status_code=200)
+async def setup_telegram_webhook(
+    _: str = Depends(lambda: None),
+    db: Session = Depends(get_db),
+):
+    """Register the webhook URL with Telegram (call once after deploy)."""
+    from app.adapters.telegram.bot import bot as tg_bot
+    if not settings.telegram_webhook_url:
+        raise HTTPException(status_code=400, detail="TELEGRAM_WEBHOOK_URL not configured")
+    ok = await tg_bot.set_webhook(
+        settings.telegram_webhook_url,
+        settings.telegram_webhook_secret,
+    )
+    return {"ok": ok, "webhook_url": settings.telegram_webhook_url}
+
+
+# ── Conversations ─────────────────────────────────────────────────────────────
+
+@router.get("/conversations/{conversation_id}")
+def get_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = ConversationService(db)
+    conv = svc.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return serialize_conversation(conv)
+
+
+@router.get("/conversations/{conversation_id}/messages")
+def list_conversation_messages(
+    conversation_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    svc = ConversationService(db)
+    conv = svc.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = svc.list_messages(conversation_id, limit=limit)
+    return {"items": [serialize_message(m) for m in messages]}
+
+
+@router.get("/conversations/{conversation_id}/runs")
+def list_conversation_runs(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = ConversationService(db)
+    conv = svc.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    runs = svc.list_agent_runs(conversation_id)
+    return {"items": [serialize_agent_run(r) for r in runs]}
+
+
+@router.post("/conversations/{conversation_id}/stop", status_code=200)
+def stop_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = ConversationService(db)
+    conv = svc.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    svc.update_conversation_status(conversation_id, "idle")
+    db.commit()
+    return {"ok": True, "status": "idle"}
+
+
+# ── Agents ────────────────────────────────────────────────────────────────────
+
+@router.get("/agents")
+def list_agents():
+    """List all configured agents."""
+    return {"agents": orchestrator.list_agents_info()}
+
+
+@router.post("/agents/reload-config", status_code=200)
+def reload_agent_config():
+    """Hot-reload agents.yaml without restart."""
+    orchestrator.reload_agents()
+    return {"ok": True, "agents": orchestrator.list_agents_info()}
