@@ -51,12 +51,20 @@ def build_context_prompt(
     db: Session,
     conversation_id: uuid.UUID,
     message_limit: int = 20,
+    max_chars: int = 3000,
 ) -> str:
     data = get_conversation_with_history(db, conversation_id, message_limit)
     if not data:
         return ""
     lines = []
-    for msg in data["messages"]:
+    total = 0
+    for msg in reversed(data["messages"]):  # 최신 메시지 우선
         prefix = f"[{msg.message_type.upper()}]"
-        lines.append(f"{prefix} {msg.raw_text}")
-    return "\n".join(lines)
+        # 긴 에이전트 출력은 300자로 잘라냄
+        body = msg.raw_text[:300] + "…" if len(msg.raw_text) > 300 else msg.raw_text
+        line = f"{prefix} {body}"
+        if total + len(line) > max_chars:
+            break
+        lines.append(line)
+        total += len(line)
+    return "\n".join(reversed(lines))

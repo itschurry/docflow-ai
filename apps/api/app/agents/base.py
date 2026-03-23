@@ -33,6 +33,10 @@ class AgentResult:
 
 
 def build_provider(provider: str, model: str) -> LLMProvider:
+    # LLM_PROVIDER=stub 환경변수로 전역 오버라이드 가능 (테스트용)
+    import os
+    if os.environ.get("LLM_PROVIDER", "").lower() == "stub":
+        return StubLLMProvider()
     if provider == "openai" and settings.openai_api_key:
         return OpenAIProvider(api_key=settings.openai_api_key, model=model)
     if provider == "anthropic" and settings.anthropic_api_key:

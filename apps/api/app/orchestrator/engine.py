@@ -143,11 +143,12 @@ class OrchestratorEngine:
             status_text = f"🟡 {agent.emoji} {agent.display_name}가 작업 중..."
             await dispatcher.dispatch_status(inbound_id, chat_id, status_text)
 
-            # Build context
+            # Build context (토큰 절약: 이전 출력 1000자, 히스토리 5개 메시지)
             ctx_parts = []
             if previous_output:
-                ctx_parts.append(f"이전 에이전트 출력:\n{previous_output}")
-            history = build_context_prompt(db, conv_id, message_limit=15)
+                trimmed = previous_output[:1000] + "…" if len(previous_output) > 1000 else previous_output
+                ctx_parts.append(f"이전 에이전트 출력:\n{trimmed}")
+            history = build_context_prompt(db, conv_id, message_limit=5, max_chars=2000)
             if history:
                 ctx_parts.append(f"대화 이력:\n{history}")
             context = "\n\n".join(ctx_parts)
