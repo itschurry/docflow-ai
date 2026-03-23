@@ -53,6 +53,10 @@ async def process_update(update: dict[str, Any], db: Session) -> None:
     if not chat_id or not text:
         return
 
+    # 봇이 보낸 메시지는 무시 (무한루프 방지)
+    if sender.get("is_bot"):
+        return
+
     if not _is_allowed_chat(chat_id):
         logger.warning("Rejected update from disallowed chat_id=%s", chat_id)
         return

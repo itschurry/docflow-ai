@@ -8,22 +8,22 @@ telegram:
   bots:
     pm:
       token: ${TELEGRAM_PM_BOT_TOKEN}
-      username: pm_bot
+      username: IdocFlowPMBot
       display_name: "PM"
       emoji: "📋"
     writer:
       token: ${TELEGRAM_WRITER_BOT_TOKEN}
-      username: writer_bot
+      username: IdocFlowWriterBot
       display_name: "Writer"
       emoji: "✍️"
     critic:
       token: ${TELEGRAM_CRITIC_BOT_TOKEN}
-      username: critic_bot
+      username: IdocflowCriticBot
       display_name: "Critic"
       emoji: "🔍"
     coder:
       token: ${TELEGRAM_CODER_BOT_TOKEN}
-      username: coder_bot
+      username: IdocflowCoderBot
       display_name: "Coder"
       emoji: "💻"
 
@@ -34,7 +34,7 @@ agents:
     emoji: "📋"
     identity: pm
     provider: openai
-    model: gpt-4.1-mini
+    model: gpt-4o
     max_tokens: 1500
     system_prompt: |
       You are a project manager AI. Your job is to analyze the user's request,
@@ -48,7 +48,7 @@ agents:
     emoji: "✍️"
     identity: writer
     provider: openai
-    model: gpt-4.1-mini
+    model: gpt-4o
     max_tokens: 2000
     system_prompt: |
       You are a professional document writer AI. Your job is to create clear,
@@ -61,8 +61,10 @@ agents:
     display_name: "Critic"
     emoji: "��"
     identity: critic
-    provider: anthropic
-    model: claude-3-5-haiku-latest
+      # provider: anthropic
+      # model: claude-3-5-haiku-latest
+    provider: openai
+    model: gpt-4o
     max_tokens: 1500
     system_prompt: |
       You are a critical reviewer AI. Your job is to find logical flaws,
@@ -76,7 +78,7 @@ agents:
     emoji: "💻"
     identity: coder
     provider: openai
-    model: gpt-4.1-mini
+    model: gpt-4o
     max_tokens: 2000
     system_prompt: |
       You are a senior software engineer AI. Your job is to propose technical
@@ -89,8 +91,10 @@ agents:
     display_name: "Reviewer"
     emoji: "✅"
     identity: pm
-    provider: anthropic
-    model: claude-3-5-haiku-latest
+      # provider: anthropic
+      # model: claude-3-5-haiku-latest
+    provider: openai
+    model: gpt-4o
     max_tokens: 1500
     system_prompt: |
       You are a quality assurance AI. Your job is to verify that outputs meet
@@ -104,7 +108,7 @@ agents:
     emoji: "🎯"
     identity: pm
     provider: openai
-    model: gpt-4.1-mini
+    model: gpt-4o
     max_tokens: 2000
     system_prompt: |
       You are a lead manager AI. Your job is to synthesize all agent outputs,
