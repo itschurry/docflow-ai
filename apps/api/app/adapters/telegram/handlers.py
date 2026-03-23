@@ -57,6 +57,11 @@ async def process_update(update: dict[str, Any], db: Session) -> None:
     if sender.get("is_bot"):
         return
 
+    # 그룹/슈퍼그룹에서만 파이프라인 실행 (개인 DM 무시)
+    if chat_type not in ("group", "supergroup"):
+        logger.debug("Ignored private message from chat_type=%s", chat_type)
+        return
+
     if not _is_allowed_chat(chat_id):
         logger.warning("Rejected update from disallowed chat_id=%s", chat_id)
         return
