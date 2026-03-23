@@ -7,6 +7,7 @@ from app.orchestrator.policies import (
     detect_mode_from_command,
     extract_mentioned_handle,
     get_pipeline,
+    is_casual_message,
 )
 
 
@@ -27,11 +28,27 @@ def route(
     new_mode = detect_mode_from_command(text)
     effective_mode = new_mode if new_mode else current_mode
 
-    # Check for direct mention
+    # Check for direct mention (@handle)
     direct_handle = extract_mentioned_handle(text, known_handles)
     if direct_handle:
         effective_mode = "direct"
+        return RoutingDecision(
+            mode=effective_mode,
+            pipeline=get_pipeline(effective_mode, direct_handle),
+            direct_handle=direct_handle,
+            new_mode=new_mode,
+        )
 
+    # 인사/잡담이면 PM(planner)만 응답
+    if is_casual_message(text):
+        return RoutingDecision(
+            mode="direct",
+            pipeline=["planner"],
+            direct_handle="planner",
+            new_mode=new_mode,
+        )
+
+    # 작업 요청 → 전체 파이프라인
     pipeline = get_pipeline(effective_mode, direct_handle)
 
     return RoutingDecision(
