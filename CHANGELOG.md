@@ -2,6 +2,27 @@
 
 ---
 
+## v0.3.1 — Multi-Bot Identity Layer + Polling Fixes (2026-03-23)
+
+### 개요
+Phase 1.5: 각 에이전트 역할별 별도 Telegram 봇 계정으로 메시지 발송.
+모든 봇이 동시에 인바운드 폴링 수행. 무한루프 방지 필터 추가.
+
+### 추가
+- **BotRegistry** (`adapters/telegram/registry.py`): agents.yaml의 `telegram.bots` 섹션에서 봇 토큰/유저명 로드, `${ENV_VAR}` 치환
+- **MultiBotOutbound** (`adapters/telegram/outbound.py`): identity별 봇 계정으로 `sendMessage` 발송
+- **BotDispatcher** (`adapters/telegram/dispatcher.py`): role→identity 해석, @멘션 자동삽입, reply chain 관리
+- **멀티봇 폴링** (`scripts/polling.py`): 4개 봇 동시 `getUpdates` 폴링, 401 즉시 중단
+
+### 수정
+- **무한루프 차단** (`handlers.py`): `is_bot=True` 메시지 무시 — 봇 발신 메시지가 다시 파이프라인을 트리거하는 문제 해결
+- **DB 스키마** (`conversation_models.py`): `conversations.last_message_ids`, `messages.speaker_*`, `agent_runs.output_message_id` 컬럼 추가
+- **OrchestratorEngine**: dispatcher 사용, reply chain 추적, speaker identity DB 저장
+- **.env 파싱**: 인라인 주석(`# ...`) 제거로 토큰 파싱 오류 해결
+- **agents.yaml**: 전 에이전트 gpt-4o 통일 (Anthropic 비활성화)
+
+---
+
 ## v0.3.0 — Telegram Multi-Agent Platform (2026-03-23)
 
 ### 개요
