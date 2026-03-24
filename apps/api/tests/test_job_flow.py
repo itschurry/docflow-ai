@@ -1,5 +1,40 @@
 from pathlib import Path
 
+from app.services.file_generators import generate_budget_xlsx
+from app.services.file_generators import generate_pptx
+from app.services.file_generators import generate_report_docx
+
+
+def test_upload_file_returns_document_ir_analysis(client):
+    project = client.post(
+        "/api/projects",
+        json={"name": "Upload IR Project", "description": "analysis"},
+    )
+    assert project.status_code == 200
+    project_id = project.json()["id"]
+
+    samples = [
+        ("sample.docx", generate_report_docx("업로드 보고서", "## 개요\n- 핵심 내용"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word"),
+        ("sample.xlsx", generate_budget_xlsx([{"category": "ops", "name": "cloud", "unit_cost": 100, "months": 2, "rate": 1}], 200), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "sheet"),
+        ("sample.pptx", generate_pptx("업로드 발표", [{"title": "개요", "bullets": ["핵심 메시지", "다음 단계"]}]), "application/vnd.openxmlformats-officedocument.presentationml.presentation", "slides"),
+    ]
+
+    for filename, payload, mime_type, expected_type in samples:
+        upload = client.post(
+            f"/api/projects/{project_id}/files",
+            files={"uploaded_file": (filename, payload, mime_type)},
+        )
+        assert upload.status_code == 200
+        upload_payload = upload.json()
+        assert upload_payload["document_type"] == expected_type
+        assert upload_payload["document_summary"]
+        assert upload_payload["document_ir"]["document_type"] == expected_type
+
+        analysis = client.get(f"/api/files/{upload_payload['id']}/analysis")
+        assert analysis.status_code == 200
+        assert analysis.json()["file"]["document_type"] == expected_type
+        assert analysis.json()["document_ir"]["document_type"] == expected_type
+
 
 def test_full_job_flow_persists_generated_artifacts_and_logs(client):
     project = client.post(
@@ -54,6 +89,7 @@ def test_full_job_flow_persists_generated_artifacts_and_logs(client):
     assert any(n.endswith(".docx") for n in names)
     assert any(n.endswith(".xlsx") for n in names)
     assert any(n.endswith(".pptx") for n in names)
+    assert any(a["document_type"] for a in generated)
 
     task_statuses = {t["task_type"]: t["status"]
                      for t in artifacts_payload["tasks"]}

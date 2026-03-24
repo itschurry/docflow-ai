@@ -113,6 +113,8 @@ def serialize_team_run(run: TeamRunModel) -> dict:
         "requested_by": run.requested_by,
         "request_text": run.request_text,
         "selected_agents": list(run.selected_agents or []),
+        "source_file_ids": list(run.source_file_ids or []),
+        "source_ir_summary": run.source_ir_summary,
         "final_artifact_id": str(run.final_artifact_id) if run.final_artifact_id else None,
         "created_at": run.created_at.isoformat(),
         "updated_at": run.updated_at.isoformat(),

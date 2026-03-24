@@ -30,6 +30,8 @@ class TeamRunService:
         requested_by: str,
         request_text: str = "",
         selected_agents: list[str] | None = None,
+        source_file_ids: list[uuid.UUID] | list[str] | None = None,
+        source_ir_summary: str = "",
         status: str = "idle",
     ) -> TeamRunModel:
         run = TeamRunModel(
@@ -41,6 +43,8 @@ class TeamRunService:
             requested_by=requested_by,
             request_text=request_text,
             selected_agents=list(selected_agents or []),
+            source_file_ids=[str(item) for item in (source_file_ids or [])],
+            source_ir_summary=source_ir_summary or "",
             status=status,
         )
         self.db.add(run)

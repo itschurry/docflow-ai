@@ -78,6 +78,8 @@ class FileModel(Base):
     size: Mapped[int] = mapped_column(Integer, nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     extracted_text: Mapped[str] = mapped_column(Text, default="")
+    document_type: Mapped[str] = mapped_column(String(30), default="", nullable=False)
+    document_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_utc, nullable=False)
 

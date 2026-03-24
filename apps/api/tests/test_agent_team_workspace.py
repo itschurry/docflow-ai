@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 import uuid
 
 from app.conversation_models import ConversationModel
@@ -21,6 +22,7 @@ from app.api.routes import _normalize_presentation_final_content
 from app.api.routes import _presentation_user_visible_markdown
 from app.api.routes import _task_execution_contract
 from app.api.routes import _coerce_team_tasks
+from app.services.file_generators import generate_report_docx
 
 
 def _ensure_schema() -> None:
@@ -1164,7 +1166,7 @@ def test_presentation_final_is_normalized_into_slide_markdown(client):
         orchestrator._loaded = original_loaded
 
 
-def test_team_run_can_export_docx_and_pptx(client):
+def test_team_run_can_export_docx_xlsx_and_pptx(client):
     _ensure_schema()
     created = client.post(
         "/web/team-runs",
@@ -1193,6 +1195,18 @@ def test_team_run_can_export_docx_and_pptx(client):
     assert docx_download.status_code == 200
     assert len(docx_download.content) > 0
 
+    xlsx_export = client.post(
+        f"/web/team-runs/{run_id}/exports",
+        json={"format": "xlsx"},
+    )
+    assert xlsx_export.status_code == 200
+    xlsx_payload = xlsx_export.json()
+    assert xlsx_payload["file"]["original_name"].endswith(".xlsx")
+
+    xlsx_download = client.get(xlsx_payload["download_path"])
+    assert xlsx_download.status_code == 200
+    assert len(xlsx_download.content) > 0
+
     pptx_export = client.post(
         f"/web/team-runs/{run_id}/exports",
         json={"format": "pptx"},
@@ -1204,6 +1218,58 @@ def test_team_run_can_export_docx_and_pptx(client):
     pptx_download = client.get(pptx_payload["download_path"])
     assert pptx_download.status_code == 200
     assert len(pptx_download.content) > 0
+
+
+def test_team_run_request_accepts_source_files_and_exposes_source_ir_summary(client):
+    _ensure_schema()
+    project = client.post(
+        "/api/projects",
+        json={"name": "Source Files", "description": "team run"},
+    )
+    assert project.status_code == 200
+    project_id = project.json()["id"]
+
+    upload = client.post(
+        f"/api/projects/{project_id}/files",
+        files={
+            "uploaded_file": (
+                "source.docx",
+                generate_report_docx("참고 문서", "## 배경\n- 청계천 역사\n## 현재 활용\n- 관광과 보행"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert upload.status_code == 200
+    file_id = upload.json()["id"]
+
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Source IR Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "oversight_mode": "auto",
+            "source_file_ids": [file_id],
+        },
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run"]["id"]
+    assert created.json()["run"]["source_file_ids"] == [file_id]
+    assert created.json()["run"]["source_ir_summary"]
+
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={
+            "text": "이 파일을 참고해서 청계천 브리핑 문서를 재구성해줘",
+            "sender_name": "ceo",
+            "source_file_ids": [file_id],
+        },
+    )
+    assert planned.status_code == 202
+    payload = planned.json()
+    assert payload["run"]["source_file_ids"] == [file_id]
+    assert payload["run"]["source_ir_summary"]
+    assert payload["source_files"][0]["document_type"] == "word"
+    assert payload["source_files"][0]["document_ir"]["document_type"] == "word"
 
 
 def test_team_run_can_create_manual_task_and_execute_when_ready(client):

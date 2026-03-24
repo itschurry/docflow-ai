@@ -194,6 +194,8 @@ class TeamRunModel(Base):
     requested_by: Mapped[str] = mapped_column(String(100), default="web_user", nullable=False)
     request_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     selected_agents: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_file_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_ir_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     final_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("conversation_artifacts.id", ondelete="SET NULL"),

@@ -556,6 +556,7 @@
               </div>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button id="exportDocxBtn" style="display:none">DOCX</button>
+                <button id="exportXlsxBtn" style="display:none">XLSX</button>
                 <button id="exportPptxBtn" style="display:none">PPTX</button>
                 <button id="copyDeliverable">복사</button>
               </div>
@@ -701,6 +702,7 @@
     const deliverableMetaEl = document.getElementById('deliverableMeta');
     const deliverableBodyEl = document.getElementById('deliverableBody');
     const exportDocxBtnEl = document.getElementById('exportDocxBtn');
+    const exportXlsxBtnEl = document.getElementById('exportXlsxBtn');
     const exportPptxBtnEl = document.getElementById('exportPptxBtn');
     const progressBoxEl = document.getElementById('progressBox');
     const progressListEl = document.getElementById('progressList');
@@ -854,6 +856,7 @@
         deliverableMetaEl.textContent = '';
         deliverableBodyEl.textContent = '';
         exportDocxBtnEl.style.display = 'none';
+        exportXlsxBtnEl.style.display = 'none';
         exportPptxBtnEl.style.display = 'none';
         return;
       }
@@ -864,12 +867,13 @@
       deliverableBodyEl.textContent = item.content;
       const allowExport = current?.kind === 'team_run';
       exportDocxBtnEl.style.display = allowExport ? '' : 'none';
+      exportXlsxBtnEl.style.display = allowExport ? '' : 'none';
       exportPptxBtnEl.style.display = allowExport ? '' : 'none';
     }
 
     async function exportDeliverable(format){
       if(current?.kind !== 'team_run') return;
-      const btn = format === 'docx' ? exportDocxBtnEl : exportPptxBtnEl;
+      const btn = format === 'docx' ? exportDocxBtnEl : format === 'xlsx' ? exportXlsxBtnEl : exportPptxBtnEl;
       const prev = btn.textContent;
       btn.disabled = true;
       btn.textContent = '생성 중...';
@@ -1447,6 +1451,7 @@
       await navigator.clipboard.writeText(text);
     });
     exportDocxBtnEl.addEventListener('click', () => exportDeliverable('docx').catch(err => alert(err.message)));
+    exportXlsxBtnEl.addEventListener('click', () => exportDeliverable('xlsx').catch(err => alert(err.message)));
     exportPptxBtnEl.addEventListener('click', () => exportDeliverable('pptx').catch(err => alert(err.message)));
     document.getElementById('text').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

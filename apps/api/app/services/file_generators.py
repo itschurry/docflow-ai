@@ -4,6 +4,10 @@ from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
 
+from app.services.document_ir import render_ir_to_docx_bytes
+from app.services.document_ir import render_ir_to_pptx_bytes
+from app.services.document_ir import render_ir_to_xlsx_bytes
+
 
 def generate_report_docx(title: str, body_text: str) -> bytes:
     """Convert markdown-formatted body_text to a styled DOCX document."""
@@ -83,3 +87,15 @@ def generate_pptx(title: str, slides: list[dict]) -> bytes:
     stream = BytesIO()
     prs.save(stream)
     return stream.getvalue()
+
+
+def generate_structured_docx(document_ir: dict) -> bytes:
+    return render_ir_to_docx_bytes(document_ir)
+
+
+def generate_structured_xlsx(document_ir: dict) -> bytes:
+    return render_ir_to_xlsx_bytes(document_ir)
+
+
+def generate_structured_pptx(document_ir: dict) -> bytes:
+    return render_ir_to_pptx_bytes(document_ir)

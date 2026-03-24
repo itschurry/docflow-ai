@@ -10,6 +10,8 @@ from app.core.state_machine import JobStatus
 from app.core.config import settings
 from app.core.time_utils import now_utc
 from app.models import FileModel, JobModel, PromptLogModel, TaskModel
+from app.services.document_ir import parse_document_to_ir
+from app.services.document_ir import summarize_document_ir
 from app.services.executors.context import ExecutionContext
 from app.services.executors.parser_executor import run_parse_reference_docs
 from app.services.executors.reviewer_executor import run_review_report
@@ -69,6 +71,9 @@ def _persist_generated_file(
 
     stored_path = output_dir / filename
     stored_path.write_bytes(content)
+    document_ir = parse_document_to_ir(str(stored_path), mime_type)
+    document_type = str(document_ir.get("document_type") or "")
+    document_summary = summarize_document_ir(document_ir)
 
     file_row = FileModel(
         project_id=job.project_id,
@@ -79,6 +84,8 @@ def _persist_generated_file(
         size=stored_path.stat().st_size,
         source_type="generated",
         extracted_text=extracted_text,
+        document_type=document_type,
+        document_summary=document_summary,
         created_at=now_utc(),
     )
     db.add(file_row)

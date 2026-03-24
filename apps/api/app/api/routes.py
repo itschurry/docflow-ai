@@ -43,10 +43,16 @@ from app.schemas.request_response import (
     TaskSummary,
     UploadFileResponse,
 )
-from app.services.document_parser import extract_text
+from app.services.document_ir import build_slides_ir
+from app.services.document_ir import build_word_ir_from_markdown
+from app.services.document_ir import extract_text_from_ir
+from app.services.document_ir import parse_document_to_ir
+from app.services.document_ir import render_ir_to_docx_bytes
+from app.services.document_ir import render_ir_to_pptx_bytes
+from app.services.document_ir import render_ir_to_xlsx_bytes
+from app.services.document_ir import summarize_document_ir
 from app.services.job_dispatcher import dispatch_job
 from app.services.llm_router import get_llm_provider
-from app.services.file_generators import generate_pptx, generate_report_docx
 from app.services.planner_agent import PlannerAgent
 from app.adapters.telegram.handlers import process_update
 from app.adapters.telegram.dispatcher import DispatchResult
@@ -168,6 +174,9 @@ def _persist_team_export_file(
     output_dir.mkdir(parents=True, exist_ok=True)
     stored_path = output_dir / filename
     stored_path.write_bytes(content)
+    file_ir = parse_document_to_ir(str(stored_path), mime_type)
+    document_type = str(file_ir.get("document_type") or "")
+    document_summary = summarize_document_ir(file_ir)
     file_row = FileModel(
         project_id=project.id,
         job_id=None,
@@ -177,11 +186,61 @@ def _persist_team_export_file(
         size=stored_path.stat().st_size,
         source_type="generated",
         extracted_text=extracted_text,
+        document_type=document_type,
+        document_summary=document_summary,
         created_at=now_utc(),
     )
     db.add(file_row)
     db.flush()
     return file_row
+
+
+def _file_analysis_payload(file_row: FileModel) -> dict:
+    file_ir = parse_document_to_ir(file_row.stored_path, file_row.mime_type)
+    summary = summarize_document_ir(file_ir)
+    return {
+        "document_type": str(file_ir.get("document_type") or file_row.document_type or ""),
+        "document_summary": summary or file_row.document_summary or "",
+        "document_ir": file_ir,
+    }
+
+
+def _collect_source_files(
+    db: Session,
+    source_file_ids: list[str] | list[UUID] | None,
+) -> tuple[list[FileModel], str]:
+    ids = [str(item) for item in (source_file_ids or []) if str(item).strip()]
+    if not ids:
+        return [], ""
+    rows: list[FileModel] = []
+    summaries: list[str] = []
+    for item in ids:
+        try:
+            file_id = UUID(str(item))
+        except ValueError:
+            continue
+        file_row = db.get(FileModel, file_id)
+        if not file_row:
+            continue
+        rows.append(file_row)
+        analysis = _file_analysis_payload(file_row)
+        summaries.append(
+            f"[{file_row.original_name}] {analysis['document_summary']}\n{extract_text_from_ir(analysis['document_ir'])[:1200].strip()}"
+        )
+    return rows, "\n\n".join(item for item in summaries if item).strip()
+
+
+def _build_deliverable_ir(
+    *,
+    title: str,
+    content: str,
+    run: conversation_models.TeamRunModel | None = None,
+) -> dict:
+    preset = _infer_team_workflow_preset(run.request_text or run.title) if run else ""
+    if preset == "presentation_team":
+        structured = _build_structured_deliverable(title, content)
+        return build_slides_ir(title, structured.get("slide_outline") or [], sources=structured.get("sources") or [])
+    return build_word_ir_from_markdown(title, content)
 
 
 def _has_active_ops_keys(db: Session) -> bool:
@@ -321,7 +380,10 @@ def upload_file(
         shutil.copyfileobj(uploaded_file.file, f)
 
     size = stored_path.stat().st_size
-    extracted_text = extract_text(str(stored_path), uploaded_file.content_type)
+    file_ir = parse_document_to_ir(str(stored_path), uploaded_file.content_type)
+    extracted_text = extract_text_from_ir(file_ir)
+    document_type = str(file_ir.get("document_type") or "")
+    document_summary = summarize_document_ir(file_ir)
 
     file_row = FileModel(
         project_id=project_id,
@@ -332,6 +394,8 @@ def upload_file(
         size=size,
         source_type="upload",
         extracted_text=extracted_text,
+        document_type=document_type,
+        document_summary=document_summary,
     )
     db.add(file_row)
     db.commit()
@@ -344,6 +408,9 @@ def upload_file(
         mime_type=file_row.mime_type,
         size=file_row.size,
         source_type=file_row.source_type,
+        document_type=document_type,
+        document_summary=document_summary,
+        document_ir=file_ir,
         created_at=file_row.created_at,
     )
 
@@ -443,6 +510,8 @@ def get_job_artifacts(job_id: UUID, db: Session = Depends(get_db)) -> dict:
                 original_name=item.original_name,
                 stored_path=item.stored_path,
                 source_type=item.source_type,
+                document_type=item.document_type or "",
+                document_summary=item.document_summary or "",
             ).model_dump()
             for item in artifacts
         ],
@@ -451,6 +520,29 @@ def get_job_artifacts(job_id: UUID, db: Session = Depends(get_db)) -> dict:
                         status=task.status).model_dump()
             for task in tasks
         ],
+    }
+
+
+@router.get("/api/files/{file_id}/analysis")
+def get_file_analysis(file_id: UUID, db: Session = Depends(get_db)) -> dict:
+    file_row = db.get(FileModel, file_id)
+    if not file_row:
+        raise HTTPException(status_code=404, detail="File not found")
+    analysis = _file_analysis_payload(file_row)
+    return {
+        "file": {
+            "id": str(file_row.id),
+            "project_id": str(file_row.project_id),
+            "original_name": file_row.original_name,
+            "mime_type": file_row.mime_type,
+            "size": file_row.size,
+            "source_type": file_row.source_type,
+            "document_type": analysis["document_type"],
+            "document_summary": analysis["document_summary"],
+            "created_at": file_row.created_at.isoformat(),
+        },
+        "document_ir": analysis["document_ir"],
+        "extracted_text": file_row.extracted_text or extract_text_from_ir(analysis["document_ir"]),
     }
 
 
@@ -973,11 +1065,15 @@ def create_web_team_run(
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
         raw_selected = ["planner", "writer", "critic", "manager", "coder"]
+    raw_source_file_ids = payload.get("source_file_ids")
+    if not isinstance(raw_source_file_ids, list):
+        raw_source_file_ids = []
     selected = _normalize_web_selected_agents(
         selected=raw_selected,
         valid_handles=valid,
         mode=mode,
     )
+    source_files, source_ir_summary = _collect_source_files(db, raw_source_file_ids)
 
     conv = conversation_models.ConversationModel(
         platform="web",
@@ -1000,6 +1096,8 @@ def create_web_team_run(
         oversight_mode=oversight_mode,
         requested_by=requested_by,
         selected_agents=selected,
+        source_file_ids=[str(item.id) for item in source_files],
+        source_ir_summary=source_ir_summary,
         status="idle",
     )
     _ensure_team_run_sessions(team_svc, run)
@@ -1348,6 +1446,7 @@ async def send_web_team_run_request(
 ):
     text = str(payload.get("text") or "").strip()
     sender_name = str(payload.get("sender_name") or "web_user").strip() or "web_user"
+    raw_source_file_ids = payload.get("source_file_ids")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
@@ -1356,6 +1455,8 @@ async def send_web_team_run_request(
     run = team_svc.get_run(team_run_id)
     if not run or not run.conversation_id:
         raise HTTPException(status_code=404, detail="Team run not found")
+    if not isinstance(raw_source_file_ids, list):
+        raw_source_file_ids = list(run.source_file_ids or [])
 
     conv = db.get(conversation_models.ConversationModel, run.conversation_id)
     if not conv:
@@ -1370,6 +1471,20 @@ async def send_web_team_run_request(
     run.selected_agents = selected
     conv.selected_agents = selected
     conv.updated_at = now_utc()
+    source_files, source_ir_summary = _collect_source_files(
+        db,
+        raw_source_file_ids or list(run.source_file_ids or []),
+    )
+    if source_files or raw_source_file_ids:
+        run.source_file_ids = [str(item.id) for item in source_files]
+        run.source_ir_summary = source_ir_summary
+    planning_request = text
+    if source_ir_summary:
+        planning_request = (
+            f"{text}\n\n"
+            "참고 문서 요약:\n"
+            f"{source_ir_summary}"
+        ).strip()
 
     user_participant = conv_svc.get_or_create_participant(
         conversation_id=conv.id,
@@ -1414,7 +1529,11 @@ async def send_web_team_run_request(
             related_task_id=followup.id,
             message_type="task_assignment",
             subject="후속 요청 반영",
-            content=f"사용자 후속 요청: {text}",
+            content=(
+                f"사용자 후속 요청: {text}\n\n참고 문서 요약:\n{source_ir_summary}"
+                if source_ir_summary
+                else f"사용자 후속 요청: {text}"
+            ),
         )
         team_svc.update_run(run.id, status="active", plan_status="approved")
         db.commit()
@@ -1423,7 +1542,7 @@ async def send_web_team_run_request(
         return _build_team_board_snapshot(db, run)
 
     team_svc.update_run(run.id, request_text=text, status="planning", plan_status="pending")
-    brief, task_defs = await _decompose_team_request(text, selected)
+    brief, task_defs = await _decompose_team_request(planning_request, selected)
 
     planner_task = team_svc.create_task(
         team_run_id=run.id,
@@ -1998,6 +2117,12 @@ def _extract_web_deliverable(
                 run.title or "최종 발표자료",
                 str(payload["content"] or "").strip(),
             )
+        if payload.get("content"):
+            payload["structured_ir"] = _build_deliverable_ir(
+                title=run.title if run else "Deliverable",
+                content=str(payload["content"] or "").strip(),
+                run=run,
+            )
         return payload
 
     if run:
@@ -2369,8 +2494,8 @@ def export_web_team_run_deliverable(
         raise HTTPException(status_code=404, detail="Team run not found")
 
     export_format = str(payload.get("format") or "docx").strip().lower()
-    if export_format not in {"docx", "pptx"}:
-        raise HTTPException(status_code=400, detail="format must be docx or pptx")
+    if export_format not in {"docx", "pptx", "xlsx"}:
+        raise HTTPException(status_code=400, detail="format must be docx, xlsx, or pptx")
 
     deliverable = _extract_web_deliverable(db, run.conversation_id, run=run)
     if not deliverable or not str(deliverable.get("content") or "").strip():
@@ -2380,22 +2505,21 @@ def export_web_team_run_deliverable(
     content = str(deliverable.get("content") or "").strip()
     filename_base = _slugify_filename(title, default="team-deliverable")
     structured = _build_structured_deliverable(title, content)
+    document_ir = deliverable.get("structured_ir") or _build_deliverable_ir(title=title, content=content, run=run)
 
     if export_format == "docx":
         docx_body = _structured_deliverable_to_markdown(structured, content)
-        file_bytes = generate_report_docx(title, docx_body)
+        file_bytes = render_ir_to_docx_bytes(document_ir)
         filename = f"{filename_base}.docx"
         mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         extracted_text = docx_body
+    elif export_format == "xlsx":
+        file_bytes = render_ir_to_xlsx_bytes(document_ir)
+        filename = f"{filename_base}.xlsx"
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        extracted_text = extract_text_from_ir(document_ir)
     else:
-        slides = [
-            {
-                "title": slide.get("title", "핵심 내용"),
-                "bullets": slide.get("bullets", []),
-            }
-            for slide in structured.get("slide_outline") or []
-        ] or _build_ppt_slides_from_text(title, content)
-        file_bytes = generate_pptx(title, slides)
+        file_bytes = render_ir_to_pptx_bytes(document_ir)
         filename = f"{filename_base}.pptx"
         mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         extracted_text = _structured_deliverable_to_markdown(structured, content)
@@ -3247,6 +3371,7 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
             )
         )
     deliverable = _extract_web_deliverable(db, run.conversation_id, run=run) if run.conversation_id else None
+    source_files, _ = _collect_source_files(db, list(run.source_file_ids or []))
     payload = {
         "run": serialize_team_run(run),
         "conversation": serialize_conversation(conv) if conv else None,
@@ -3265,6 +3390,18 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
         ],
         "artifacts": [serialize_artifact(artifact) for artifact in artifacts],
         "deliverable": deliverable,
+        "source_files": [
+            {
+                "id": str(file_row.id),
+                "original_name": file_row.original_name,
+                "mime_type": file_row.mime_type,
+                "document_type": analysis["document_type"],
+                "document_summary": analysis["document_summary"],
+                "document_ir": analysis["document_ir"],
+            }
+            for file_row in source_files
+            for analysis in [_file_analysis_payload(file_row)]
+        ],
     }
     leader_session = next((session for session in sessions if session.role == "leader"), None)
     payload["run"]["leader_session_id"] = str(leader_session.id) if leader_session else None
@@ -3540,6 +3677,7 @@ async def _execute_team_task(
         for part in (
             f"팀 실행 제목: {run.title}",
             f"원요청: {run.request_text}",
+            f"참고 문서 요약:\n{run.source_ir_summary}" if run.source_ir_summary else "",
             f"현재 작업: {task.title}",
             f"작업 설명: {task.description}",
             (
@@ -3570,6 +3708,7 @@ async def _execute_team_task(
                 f"- 목표 산출물: {task.artifact_goal}",
                 f"- 작업 설명: {task.description}",
                 f"- 원요청: {run.request_text}",
+                f"- 참고 문서 요약:\n{run.source_ir_summary}" if run.source_ir_summary else "",
                 "",
                 inbox_context if inbox_context else "",
                 rework_clause.strip() if rework_clause else "",

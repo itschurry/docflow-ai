@@ -48,6 +48,9 @@ class UploadFileResponse(BaseModel):
     mime_type: str
     size: int
     source_type: str
+    document_type: str = ""
+    document_summary: str = ""
+    document_ir: dict = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -62,6 +65,8 @@ class ArtifactSummary(BaseModel):
     original_name: str
     stored_path: str
     source_type: str
+    document_type: str = ""
+    document_summary: str = ""
 
 
 class PromptLogSummary(BaseModel):
