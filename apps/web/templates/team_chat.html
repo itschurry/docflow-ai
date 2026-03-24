@@ -156,21 +156,64 @@
       background: var(--success);
       flex-shrink: 0;
     }
+    /* Workspace info row */
+    .workspace-info-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .ws-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+    .ws-badge.label { background: var(--bg2); border-color: var(--line); color: var(--muted); }
+    /* Status badges */
+    .ws-badge.status-active    { background: #dcfce7; border-color: #86efac; color: #15803d; }
+    .ws-badge.status-running   { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+    .ws-badge.status-planning  { background: #fef9c3; border-color: #fde047; color: #a16207; }
+    .ws-badge.status-done      { background: #f0fdf4; border-color: #86efac; color: #166534; }
+    .ws-badge.status-blocked   { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+    .ws-badge.status-idle      { background: var(--bg2); border-color: var(--line); color: var(--muted); }
+    .ws-badge.status-dot::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.7;
+      flex-shrink: 0;
+    }
+    @keyframes pulse-dot { 0%,100%{opacity:.7} 50%{opacity:1} }
+    .ws-badge.status-active.status-dot::before,
+    .ws-badge.status-running.status-dot::before,
+    .ws-badge.status-planning.status-dot::before {
+      animation: pulse-dot 1.6s ease-in-out infinite;
+    }
+    /* Agent row */
+    .agent-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
     .top-side {
       display: grid;
       gap: 8px;
       justify-items: end;
+      align-content: start;
     }
     .top-label {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted);
       font-weight: 700;
-      letter-spacing: .04em;
+      letter-spacing: .06em;
       text-transform: uppercase;
     }
     .live {
       display: flex;
-      gap: 6px;
+      gap: 5px;
       flex-wrap: wrap;
       justify-content: flex-end;
     }
@@ -181,7 +224,7 @@
     }
     .workspace-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(300px, .95fr);
+      grid-template-columns: minmax(0, 1.18fr) minmax(360px, 1fr);
       gap: 16px;
       padding: 16px 20px 20px;
       align-items: start;
@@ -273,7 +316,13 @@
       margin-bottom: 10px;
       font-weight: 600;
     }
-    .progress-list { display: grid; gap: 6px; }
+    .progress-list {
+      display: grid;
+      gap: 6px;
+      max-height: 260px;
+      overflow: auto;
+      padding-right: 4px;
+    }
     .progress-step {
       position: relative;
       padding: 10px 12px 10px 14px;
@@ -281,7 +330,30 @@
       background: rgba(22, 163, 74, 0.04);
       border-radius: 0 10px 10px 0;
     }
-    .progress-line { font-size: 14px; line-height: 1.5; color: var(--text); }
+    .progress-line {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .progress-index,
+    .message-index {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
     .progress-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
     .panel-head {
       font-size: 13px;
@@ -303,6 +375,51 @@
     .message-list {
       display: grid;
       gap: 8px;
+    }
+    .session-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-height: 144px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .session-led {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--bg2);
+      padding: 6px 10px;
+      min-height: 30px;
+    }
+    .session-led-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #94a3b8;
+      box-shadow: 0 0 0 0 rgba(148, 163, 184, 0.45);
+      flex-shrink: 0;
+    }
+    .session-led.busy .session-led-dot {
+      background: #22c55e;
+      box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.16);
+      animation: pulse-dot 1.4s ease-in-out infinite;
+    }
+    .session-led-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .session-led-state {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .message-list {
+      max-height: 300px;
+      overflow: auto;
+      padding-right: 4px;
     }
     .session-item,
     .message-item {
@@ -388,18 +505,61 @@
     .task-badge.ready { border-color: #86efac; background: #f0fff4; color: #166534; }
     .task-badge.artifact { border-color: #93c5fd; background: #eff5ff; color: #1d4ed8; }
     .task-detail-box {
-      padding: 14px 14px 16px;
+      position: fixed;
+      left: 300px;
+      right: 0;
+      bottom: 0;
+      width: calc(100% - 300px);
+      max-height: 86vh;
+      overflow: auto;
+      border-radius: 18px 18px 0 0;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      box-shadow: 0 -12px 34px rgba(15, 23, 42, 0.22);
+      z-index: 60;
+      padding: 14px 18px 16px;
+      transform: translateY(108%);
+      transition: transform .24s ease;
+    }
+    .task-detail-box.open {
+      transform: translateY(0);
+    }
+    .task-detail-backdrop {
+      position: fixed;
+      left: 300px;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      background: rgba(2, 6, 23, 0.38);
+      z-index: 54;
+      display: none;
+    }
+    .task-detail-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .task-detail-close {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
     }
     .task-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
     .task-detail-title { font-size: 16px; font-weight: 700; color: var(--text); }
     .task-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .task-detail-actions select,
     .task-detail-actions button { font-size: 13px; padding: 7px 10px; }
-    .task-detail-grid { display: grid; grid-template-columns: 1.3fr .9fr; gap: 10px; }
+    .task-detail-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .task-detail-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 12px; }
     .task-detail-card b { display: block; margin-bottom: 6px; font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
     .task-detail-body { white-space: pre-wrap; line-height: 1.5; font-size: 13px; color: var(--text); }
-    .task-detail-list { display: grid; gap: 6px; }
+    .task-detail-list { display: grid; gap: 6px; max-height: 220px; overflow: auto; padding-right: 4px; }
     .task-detail-item { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 10px; }
     .task-detail-item-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; color: var(--text); }
     .task-empty { font-size: 13px; color: var(--muted); }
@@ -424,6 +584,17 @@
       .task-detail-grid { grid-template-columns: 1fr; }
       .task-form-grid.two,
       .task-form-grid.three { grid-template-columns: 1fr; }
+      .task-detail-box {
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 92vh;
+        padding: 12px 12px 14px;
+      }
+      .task-detail-backdrop {
+        left: 0;
+        right: 0;
+      }
     }
     .chat-panel {
       min-height: 320px;
@@ -596,6 +767,14 @@
           </select>
         </div>
         <div class="row">
+          <select id="autoReviewPreset" style="width:100%" title="자동 검토 프리셋">
+            <option value="2" selected>빠름 (권장) · 2회</option>
+            <option value="3">균형 · 3회</option>
+            <option value="4">고품질 · 4회</option>
+          </select>
+        </div>
+        <div class="mini" id="autoReviewPresetHint">짧은 요청은 빠름(2회), 일반 문서는 균형(3회), 중요한 결과물은 고품질(4회)을 권장합니다.</div>
+        <div class="row">
           <button id="newChat" style="flex:1">새 채팅</button>
           <button id="refresh" style="flex:1">새로고침</button>
         </div>
@@ -623,13 +802,13 @@
       <div class="top">
         <div>
           <div class="kicker">DocFlow AI</div>
-          <div class="title">AI 팀 작업공간</div>
-          <div class="subtitle">요청 내용을 입력하면 AI 팀이 자동으로 문서를 작성합니다. 진행 상황을 실시간으로 확인하고 필요할 때 개입하세요.</div>
-          <div class="mini status-strip" id="chatInfo">연결 중...</div>
+          <div class="title" id="workspaceTitle">AI 팀 작업공간</div>
+          <div class="subtitle" id="workspaceSubtitle">요청 내용을 입력하면 AI 팀이 자동으로 문서를 작성합니다. 진행 상황을 실시간으로 확인하고 필요할 때 개입하세요.</div>
+          <div id="chatInfo" class="workspace-info-row"></div>
         </div>
         <div class="top-side">
-          <div class="top-label">현재 참여 에이전트</div>
-          <div class="live" id="activeAgents"></div>
+          <div class="top-label">참여 에이전트</div>
+          <div class="live agent-row" id="activeAgents"></div>
         </div>
       </div>
       <div class="workspace-grid">
@@ -704,6 +883,13 @@
             </div>
           </div>
           <div class="task-detail-box" id="taskDetailBox" style="display:none">
+            <div class="task-detail-panel-head">
+              <div>
+                <b>🧩 작업 상세 / 검토</b>
+                <span class="mini">선택한 카드 기준</span>
+              </div>
+              <button id="closeTaskDetailBtn" class="task-detail-close">닫기</button>
+            </div>
             <div class="task-detail-head">
               <div>
                 <div class="task-detail-title" id="taskDetailTitle">작업 상세</div>
@@ -772,6 +958,7 @@
       </div>
     </main>
   </div>
+  <div class="task-detail-backdrop" id="taskDetailBackdrop" style="display:none"></div>
 
   <script>
     const apiBase = location.origin;
@@ -781,6 +968,8 @@
     const chatEl = document.getElementById('chat');
     const oversightModeEl = document.getElementById('oversightMode');
     const outputTypeEl = document.getElementById('outputType');
+    const autoReviewPresetEl = document.getElementById('autoReviewPreset');
+    const autoReviewPresetHintEl = document.getElementById('autoReviewPresetHint');
     const chatInfoEl = document.getElementById('chatInfo');
     const activeAgentsEl = document.getElementById('activeAgents');
     const pickerEl = document.getElementById('agentPicker');
@@ -843,12 +1032,19 @@
     const editTaskDepsEl = document.getElementById('editTaskDeps');
     const saveTaskEditBtnEl = document.getElementById('saveTaskEditBtn');
     const saveTaskDepsBtnEl = document.getElementById('saveTaskDepsBtn');
+    const closeTaskDetailBtnEl = document.getElementById('closeTaskDetailBtn');
+    const taskDetailBackdropEl = document.getElementById('taskDetailBackdrop');
     let selectedTaskId = null;
     let currentBoardTasks = [];
     let currentTaskDetail = null;
     let isCreateTaskOpen = false;
     let typingEl = null;
     let uploadedSourceFiles = [];
+    const AUTO_REVIEW_PRESET_HINTS = {
+      '2': '짧은 요청은 빠름(2회), 일반 문서는 균형(3회), 중요한 결과물은 고품질(4회)을 권장합니다.',
+      '3': '가장 무난한 기본값입니다. 초안-검토-보완 흐름을 균형 있게 수행합니다.',
+      '4': '품질 우선 모드입니다. 검토/반려 라운드를 더 허용해 완성도를 높입니다.',
+    };
 
     function esc(s){ return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -879,6 +1075,10 @@
       if(next.output_type){
         outputTypeEl.value = next.output_type;
       }
+      if(typeof next.auto_review_max_rounds === 'number'){
+        autoReviewPresetEl.value = ensureAutoReviewPresetOption(next.auto_review_max_rounds);
+      }
+      updateAutoReviewPresetHint();
     }
 
     function currentSelectedAgents(){
@@ -889,12 +1089,52 @@
       return outputTypeEl.value || current?.output_type || 'docx';
     }
 
+    function currentAutoReviewMaxRounds(){
+      const candidate = Number(autoReviewPresetEl?.value || current?.auto_review_max_rounds || 2);
+      if(!Number.isFinite(candidate)) return 2;
+      return Math.min(6, Math.max(1, Math.trunc(candidate)));
+    }
+
+    function ensureAutoReviewPresetOption(value){
+      const normalized = Math.min(6, Math.max(1, Math.trunc(Number(value) || 2)));
+      const key = String(normalized);
+      const hasOption = Array.from(autoReviewPresetEl.options || []).some(option => option.value === key);
+      if(hasOption){
+        const customOption = autoReviewPresetEl.querySelector('option[data-custom="true"]');
+        if(customOption) customOption.remove();
+        return key;
+      }
+      let customOption = autoReviewPresetEl.querySelector('option[data-custom="true"]');
+      if(!customOption){
+        customOption = document.createElement('option');
+        customOption.setAttribute('data-custom', 'true');
+        autoReviewPresetEl.appendChild(customOption);
+      }
+      customOption.value = key;
+      customOption.textContent = `커스텀 · ${key}회`;
+      return key;
+    }
+
+    function updateAutoReviewPresetHint(){
+      if(!autoReviewPresetHintEl) return;
+      const key = ensureAutoReviewPresetOption(autoReviewPresetEl?.value || 2);
+      const hint = AUTO_REVIEW_PRESET_HINTS[key] || `커스텀 설정입니다. 최대 ${key}회 자동 검토를 수행합니다.`;
+      autoReviewPresetHintEl.textContent = hint;
+    }
+
     function currentOversightMode(){
       return current?.oversight_mode || 'auto';
     }
 
     function isAutoTeamRun(){
       return current?.kind === 'team_run' && currentOversightMode() === 'auto';
+    }
+
+    function isTeamInterventionWindow(){
+      if(current?.kind !== 'team_run') return false;
+      const status = String(current?.status || '');
+      const planStatus = String(current?.plan_status || '');
+      return status === 'awaiting_review' || status === 'awaiting_plan_approval' || planStatus === 'awaiting_approval';
     }
 
     function renderMessages(items){
@@ -922,15 +1162,16 @@
     function renderActiveAgents(entity){
       const selected = new Set(entity?.selected_agents || entity?.conversation?.selected_agents || []);
       const seen = new Set();
-      activeAgentsEl.innerHTML = allAgents
+      const agents = allAgents
         .filter(a => selected.has(a.handle))
         .filter(a => {
           const key = String((a.display_name || a.identity || a.handle || '')).toLowerCase();
           if(seen.has(key)) return false;
           seen.add(key);
           return true;
-        })
-        .map(a => `<span class="agent-chip">${esc(a.emoji || '🤖')} ${esc(a.display_name || a.handle)}</span>`)
+        });
+      activeAgentsEl.innerHTML = agents
+        .map(a => `<span class="ws-badge label" title="${esc(a.handle)}">${esc(a.emoji || '🤖')} ${esc(a.display_name || a.handle)}</span>`)
         .join('');
     }
 
@@ -1059,13 +1300,15 @@
         return;
       }
       progressBoxEl.style.display = '';
-      progressListEl.innerHTML = steps.map(step => {
+      const ordered = [...steps].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      progressListEl.innerHTML = ordered.map((step, index) => {
+        const displayIndex = ordered.length - index;
         const actor = handleLabel(step.actor_handle);
         const target = step.target_handle ? handleLabel(step.target_handle) : null;
         const line = target
           ? `${actor}이 ${target}에게 ${step.summary}`
           : `${actor}이 ${step.summary}`;
-        return `<div class="progress-step"><div class="progress-line">${esc(line)}</div><div class="progress-meta">${esc(progressStatusText(step.status))} · ${esc(step.created_at)}</div></div>`;
+        return `<div class="progress-step"><div class="progress-line"><span class="progress-index">#${displayIndex}</span><span>${esc(line)}</span></div><div class="progress-meta">${esc(progressStatusText(step.status))} · ${esc(step.created_at)}</div></div>`;
       }).join('');
     }
 
@@ -1076,9 +1319,11 @@
         return;
       }
       progressBoxEl.style.display = '';
-      progressListEl.innerHTML = events.map(event => {
+      const ordered = [...events].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      progressListEl.innerHTML = ordered.map((event, index) => {
+        const displayIndex = ordered.length - index;
         const actor = event.actor_handle ? `${handleLabel(event.actor_handle)} · ` : '';
-        return `<div class="progress-step"><div class="progress-line">${esc(actor + (event.summary || '활동 기록'))}</div><div class="progress-meta">${esc(event.event_type || 'activity')} · ${esc(event.created_at)}</div></div>`;
+        return `<div class="progress-step"><div class="progress-line"><span class="progress-index">#${displayIndex}</span><span>${esc(actor + (event.summary || '활동 기록'))}</span></div><div class="progress-meta">${esc(event.event_type || 'activity')} · ${esc(event.created_at)}</div></div>`;
       }).join('');
     }
 
@@ -1116,11 +1361,18 @@
         return;
       }
       sessionBoxEl.style.display = '';
-      sessionMetaEl.textContent = `${items.length} sessions`;
-      sessionListEl.innerHTML = items.map(item => {
+      const ordered = [...items].sort((a, b) => String(a.handle || '').localeCompare(String(b.handle || '')));
+      const busyCount = ordered.filter(item => {
         const task = item.current_task_id ? taskMap[item.current_task_id] : null;
-        const line = task ? `${task.title} · ${task.status}` : '대기 중';
-        return `<div class="session-item"><div class="session-title">${esc(handleLabel(item.handle))}</div><div class="session-meta">${esc(item.role)} · ${esc(item.status)}${item.last_heartbeat_at ? ` · ${esc(item.last_heartbeat_at)}` : ''}</div><div class="session-meta">${esc(line)}</div></div>`;
+        return item.status === 'busy' || task?.status === 'in_progress';
+      }).length;
+      sessionMetaEl.textContent = `${busyCount}/${ordered.length} 작업 중`;
+      sessionListEl.innerHTML = ordered.map(item => {
+        const task = item.current_task_id ? taskMap[item.current_task_id] : null;
+        const isBusy = item.status === 'busy' || task?.status === 'in_progress';
+        const state = isBusy ? '작업 중' : '대기';
+        const taskTitle = task?.title ? ` · ${task.title}` : '';
+        return `<div class="session-led ${isBusy ? 'busy' : 'idle'}" title="${esc(state + taskTitle)}"><span class="session-led-dot"></span><span class="session-led-name">${esc(handleLabel(item.handle))}</span><span class="session-led-state">${esc(state)}</span></div>`;
       }).join('');
     }
 
@@ -1137,10 +1389,14 @@
       }
       messageBoxEl.style.display = '';
       messageMetaEl.textContent = `${items.length} messages`;
-      messageListEl.innerHTML = items.slice(-8).reverse().map(item => {
+      const ordered = [...items]
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+        .slice(0, 12);
+      messageListEl.innerHTML = ordered.map((item, index) => {
+        const displayIndex = ordered.length - index;
         const from = item.from_handle ? handleLabel(item.from_handle) : 'system';
         const to = item.to_handle ? handleLabel(item.to_handle) : 'team';
-        return `<div class="message-item"><div class="message-title">${esc(item.subject || item.message_type || 'message')}</div><div class="message-meta">${esc(from)} -> ${esc(to)} · ${esc(item.created_at)}</div><div class="message-body">${esc(item.content || '')}</div></div>`;
+        return `<div class="message-item"><div class="message-title"><span class="message-index">#${displayIndex}</span> ${esc(item.subject || item.message_type || 'message')}</div><div class="message-meta">${esc(from)} -> ${esc(to)} · ${esc(item.created_at)}</div><div class="message-body">${esc(item.content || '')}</div></div>`;
       }).join('');
     }
 
@@ -1170,6 +1426,13 @@
 
     function selectedValues(selectEl){
       return Array.from(selectEl.selectedOptions || []).map(option => option.value).filter(Boolean);
+    }
+
+    function setTaskDetailOpen(open){
+      const visible = Boolean(open);
+      taskDetailBoxEl.style.display = visible ? '' : 'none';
+      taskDetailBoxEl.classList.toggle('open', visible);
+      taskDetailBackdropEl.style.display = visible ? '' : 'none';
     }
 
     function renderTaskCreateForm(){
@@ -1220,12 +1483,12 @@
 
     function renderTaskDetail(payload){
       currentTaskDetail = payload || null;
-      if(isAutoTeamRun()){
-        taskDetailBoxEl.style.display = 'none';
+      if(isAutoTeamRun() && !isTeamInterventionWindow()){
+        setTaskDetailOpen(false);
         return;
       }
       if(!payload?.task){
-        taskDetailBoxEl.style.display = 'none';
+        setTaskDetailOpen(false);
         taskDetailTitleEl.textContent = '작업 상세';
         taskDetailMetaEl.textContent = '';
         taskDetailDescriptionEl.textContent = '';
@@ -1259,7 +1522,7 @@
       if(task.claimed_by_handle) meta.push(`claimed by ${task.claimed_by_handle}`);
       const review = reviewStateLabel(task);
       if(review) meta.push(review);
-      taskDetailBoxEl.style.display = '';
+      setTaskDetailOpen(true);
       taskDetailTitleEl.textContent = task.title || '작업 상세';
       taskDetailMetaEl.textContent = meta.join(' · ');
       taskDetailDescriptionEl.textContent = task.description || '-';
@@ -1333,8 +1596,8 @@
       renderSourceFiles(data.source_files || []);
       renderActiveAgents(current);
       renderPicker(current);
-      chatInfoEl.textContent = workspaceSummary(current);
-      document.getElementById('text').placeholder = isAutoTeamRun()
+      updateWorkspaceHeader(current);
+      document.getElementById('text').placeholder = (isAutoTeamRun() && !isTeamInterventionWindow())
         ? '요청을 입력하면 AI 팀이 자동으로 결과물을 만들어 드립니다...'
         : 'AI 팀에게 요청하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)';
     }
@@ -1420,7 +1683,7 @@
       const selected_agents = ['planner','writer','critic','manager'];
       const source_file_ids = uploadedSourceFiles.map(file => file.id).filter(Boolean);
       if(mode === 'team-autonomous'){
-        const data = await api('/web/team-runs', {method:'POST', body: JSON.stringify({title:'Web Team Run', requested_by:'web_user', selected_agents, oversight_mode, output_type, source_file_ids})});
+        const data = await api('/web/team-runs', {method:'POST', body: JSON.stringify({title:'Web Team Run', requested_by:'web_user', selected_agents, oversight_mode, output_type, auto_review_max_rounds: currentAutoReviewMaxRounds(), source_file_ids})});
         await applyTeamSnapshot(data);
       } else {
         const data = await api('/web/chats', {method:'POST', body: JSON.stringify({title:'Web Team Chat', mode, selected_agents})});
@@ -1433,7 +1696,7 @@
         renderSourceFiles(uploadedSourceFiles);
         oversightModeEl.value = 'auto';
       }
-      chatInfoEl.textContent = workspaceSummary(current);
+      updateWorkspaceHeader(current);
       renderActiveAgents(current);
       renderPicker(current);
       saveHintEl.textContent = '';
@@ -1459,7 +1722,7 @@
       }
       renderActiveAgents(current);
       renderPicker(current);
-      chatInfoEl.textContent = workspaceSummary(current);
+      updateWorkspaceHeader(current);
     }
 
     async function saveAgents(){
@@ -1501,7 +1764,7 @@
       let data;
       try {
         if(current.kind === 'team_run'){
-          data = await api(`/web/team-runs/${current.id}/requests`, {method:'POST', body: JSON.stringify({text, sender_name: sender, output_type: currentOutputType(), source_file_ids: uploadedSourceFiles.map(file => file.id).filter(Boolean)})});
+          data = await api(`/web/team-runs/${current.id}/requests`, {method:'POST', body: JSON.stringify({text, sender_name: sender, output_type: currentOutputType(), auto_review_max_rounds: currentAutoReviewMaxRounds(), source_file_ids: uploadedSourceFiles.map(file => file.id).filter(Boolean)})});
           await applyTeamSnapshot(data);
         } else {
           data = await api(`/web/chats/${current.id}/messages`, {method:'POST', body: JSON.stringify({text, sender_name: sender})});
@@ -1518,25 +1781,80 @@
       renderDeliverable(data.deliverable || null);
       renderActiveAgents(current);
       renderPicker(current);
-      chatInfoEl.textContent = workspaceSummary(current);
+      updateWorkspaceHeader(current);
     }
 
     function workspaceSummary(entity){
-      if(entity?.kind === 'team_run'){
-        const preset = entity?.workflow_preset ? ` · preset: ${entity.workflow_preset}` : '';
-        const plan = entity?.plan_status ? ` · plan: ${entity.plan_status}` : '';
-        const output = entity?.output_type ? ` · output: ${entity.output_type}` : '';
-        return `team_run: ${entity?.id || '-'} · mode: ${entity?.oversight_mode || 'auto'}${output}${preset}${plan} · status: ${entity?.status || 'idle'}`;
+      if(!entity) return '';
+      if(entity.kind === 'team_run'){
+        const STATUS_KO = {
+          idle: '대기', planning: '기획 중', active: '실행 중', running: '실행 중',
+          done: '완료', done_with_risks: '완료(주의)', blocked: '중단', paused: '일시정지'
+        };
+        const STATUS_CSS = {
+          idle: 'idle', planning: 'planning', active: 'active', running: 'running',
+          done: 'done', done_with_risks: 'done', blocked: 'blocked', paused: 'idle'
+        };
+        const PLAN_KO = {
+          pending: '계획 대기', approved: '계획 승인', awaiting_approval: '승인 대기',
+          rejected: '계획 반려'
+        };
+        const OUTPUT_KO = { docx: 'DOCX 문서', xlsx: 'XLSX 표', pptx: 'PPTX 슬라이드', slide: 'PPT 슬라이드' };
+        const MODE_KO = { auto: '자동 실행', manual: '수동 실행', 'team-autonomous': '팀 자동 실행' };
+
+        const status = entity.status || 'idle';
+        const statusKo = STATUS_KO[status] || status;
+        const statusCss = STATUS_CSS[status] || 'idle';
+        const planKo = PLAN_KO[entity.plan_status] || entity.plan_status || '';
+        const outputKo = OUTPUT_KO[entity.output_type] || (entity.output_type || '').toUpperCase();
+        const modeKo = MODE_KO[entity.oversight_mode] || MODE_KO[entity.mode] || '자동';
+
+        const parts = [
+          `<span class="ws-badge status-${statusCss} status-dot">${statusKo}</span>`,
+          planKo ? `<span class="ws-badge label">📋 ${planKo}</span>` : '',
+          outputKo ? `<span class="ws-badge label">📄 ${outputKo}</span>` : '',
+          `<span class="ws-badge label">⚙️ ${modeKo}</span>`,
+        ].filter(Boolean).join('');
+        return parts;
       }
-      const next = entity?.expected_next_handle ? ` · next: ${entity.expected_next_handle}` : '';
-      const status = entity?.status ? ` · status: ${entity.status}` : '';
-      return `chat: ${entity?.id || '-'}${status}${next}`;
+      // Chat
+      const STATUS_KO = { idle: '대기', active: '진행 중', done: '완료', blocked: '중단' };
+      const status = entity.status || 'idle';
+      return `<span class="ws-badge status-${status === 'active' ? 'active' : 'idle'} status-dot">${STATUS_KO[status] || status}</span>`;
+    }
+
+    function updateWorkspaceHeader(entity){
+      if(!entity) return;
+      const titleEl = document.getElementById('workspaceTitle');
+      const subtitleEl = document.getElementById('workspaceSubtitle');
+      if(entity.kind === 'team_run'){
+        const reqText = entity.request_text || '';
+        const displayName = reqText
+          ? (reqText.length > 60 ? reqText.slice(0, 60) + '…' : reqText)
+          : (entity.title || 'AI 팀 작업공간');
+        if(titleEl) titleEl.textContent = displayName;
+        if(subtitleEl) {
+          if(reqText) {
+            subtitleEl.style.display = 'none';
+          } else {
+            subtitleEl.style.display = '';
+            subtitleEl.textContent = '요청 내용을 입력하면 AI 팀이 자동으로 문서를 작성합니다. 진행 상황을 실시간으로 확인하고 필요할 때 개입하세요.';
+          }
+        }
+      } else {
+        if(titleEl) titleEl.textContent = entity.title || 'AI 채팅';
+        if(subtitleEl) subtitleEl.style.display = '';
+      }
+      chatInfoEl.innerHTML = workspaceSummary(entity);
     }
 
     document.getElementById('newChat').addEventListener('click', () => createWorkspace().catch(e => alert(e.message)));
     document.getElementById('refresh').addEventListener('click', () => refresh().catch(e => alert(e.message)));
     document.getElementById('saveAgents').addEventListener('click', () => saveAgents().catch(e => alert(e.message)));
     document.getElementById('send').addEventListener('click', () => send().catch(e => alert(e.message)));
+    autoReviewPresetEl.addEventListener('change', () => {
+      updateAutoReviewPresetHint();
+    });
     uploadSourceBtnEl.addEventListener('click', () => uploadSourceFiles().catch(e => {
       sourceFileHintEl.textContent = e.message;
       alert(e.message);
@@ -1609,6 +1927,20 @@
       if(!currentTaskDetail?.task) return;
       updateSelectedTaskDependencies().catch(err => alert(err.message));
     });
+    closeTaskDetailBtnEl.addEventListener('click', () => {
+      selectedTaskId = null;
+      renderTaskDetail(null);
+    });
+    taskDetailBackdropEl.addEventListener('click', () => {
+      selectedTaskId = null;
+      renderTaskDetail(null);
+    });
+    document.addEventListener('keydown', (e) => {
+      if(e.key !== 'Escape') return;
+      if(taskDetailBoxEl.style.display === 'none') return;
+      selectedTaskId = null;
+      renderTaskDetail(null);
+    });
     document.getElementById('copyDeliverable').addEventListener('click', async () => {
       const text = deliverableBodyEl.textContent || '';
       if(!text) return;
@@ -1625,6 +1957,7 @@
     });
 
     (async () => {
+      updateAutoReviewPresetHint();
       await loadAgents();
       await loadWorkspaces();
     })().catch(e => alert(e.message));
