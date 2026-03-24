@@ -3067,7 +3067,7 @@ def _task_execution_contract(
 def _required_workflow_agents(mode: str | None) -> list[str]:
     normalized = (mode or "").strip().lower()
     if normalized in {"autonomous", "autonomous-lite", "team-autonomous"}:
-        return ["planner", "writer", "critic", "manager"]
+        return ["planner", "writer", "critic", "qa", "manager"]
     return ["planner"]
 
 
@@ -3567,17 +3567,27 @@ def _review_snapshot(
         ),
         None,
     )
+    
     has_review_notes = latest_review_artifact is not None
     review_state = "not_required"
-    if latest_review_event and (
-        not latest_review_artifact
-        or latest_review_event.created_at >= latest_review_artifact.created_at
-    ):
-        review_state = "approved" if latest_review_event.event_type == "review_approved" else "rejected"
-    elif has_review_notes:
+    
+    # If there's a user approval/rejection after the latest notes, that's the final word
+    if latest_review_event:
+        if not latest_review_artifact or latest_review_event.created_at >= latest_review_artifact.created_at:
+            review_state = "approved" if latest_review_event.event_type == "review_approved" else "rejected"
+            return {
+                "has_review_notes": has_review_notes,
+                "review_state": review_state,
+                "latest_review_artifact": latest_review_artifact,
+                "latest_review_event": latest_review_event,
+            }
+
+    # Otherwise, check if it's currently reviewed but waiting for user action
+    if has_review_notes:
         review_state = "reviewed"
     elif task.review_required:
         review_state = "required"
+        
     return {
         "has_review_notes": has_review_notes,
         "review_state": review_state,
@@ -3879,6 +3889,11 @@ def _serialize_team_task_snapshot(
     )
     item["has_review_notes"] = bool(review["has_review_notes"])
     item["review_state"] = str(review["review_state"])
+
+    # Override status for board rendering in manual mode
+    if run.oversight_mode == "manual" and review["review_state"] == "reviewed":
+        item["status"] = "review"
+
     return item
 
 
@@ -5089,11 +5104,14 @@ def _progress_summary_for_message(msg: conversation_models.MessageModel) -> str:
     mapped = {
         ("planner", "writer"): "작업 기준을 정리하고 초안 작성을 요청",
         ("writer", "critic"): "초안을 작성하고 검토를 요청",
-        ("critic", "manager"): "검토 의견을 정리하고 최종 판단을 요청",
+        ("critic", "qa"): "검토 의견을 정리하고 최종 검증을 요청",
+        ("qa", "manager"): "검증 결과를 확인하고 최종 승인을 요청",
+        ("critic", "manager"): "검토 의견을 정리하고 최종 판단을 요청", # fallback
         ("manager", None): "최종 결과물을 정리",
         ("planner", None): "작업 기준을 정리",
         ("writer", None): "초안을 작성",
         ("critic", None): "검토 의견을 작성",
+        ("qa", None): "최종 품질 검증 수행",
     }.get((actor, target))
     if mapped:
         return mapped

@@ -1058,7 +1058,8 @@
 
     function handleLabel(handle){
       if(!handle) return 'system';
-      const found = allAgents.find(a => String(a.handle || '').toLowerCase() === String(handle).toLowerCase());
+      const h = String(handle).toLowerCase();
+      const found = allAgents.find(a => String(a.handle || '').toLowerCase() === h || String(a.identity || '').toLowerCase() === h);
       return found?.display_name || handle;
     }
 
@@ -1468,8 +1469,8 @@
       }
       boardBoxEl.style.display = '';
       const availableTaskIds = new Set(tasks.map(task => task.id));
-      if(!selectedTaskId || !availableTaskIds.has(selectedTaskId)){
-        selectedTaskId = (tasks.find(task => task.status !== 'done') || tasks[0] || {}).id || null;
+      if(selectedTaskId && !availableTaskIds.has(selectedTaskId)){
+        selectedTaskId = null;
       }
       boardColumnsEl.innerHTML = statuses.map(status => {
         const items = tasks.filter(task => task.status === status);
@@ -1483,10 +1484,7 @@
 
     function renderTaskDetail(payload){
       currentTaskDetail = payload || null;
-      if(isAutoTeamRun() && !isTeamInterventionWindow()){
-        setTaskDetailOpen(false);
-        return;
-      }
+      
       if(!payload?.task){
         setTaskDetailOpen(false);
         taskDetailTitleEl.textContent = '작업 상세';
@@ -1513,25 +1511,36 @@
         saveTaskDepsBtnEl.disabled = true;
         return;
       }
-      const task = payload.task;
+      
+      const task = payload.task || {};
+      const run = payload.run || {};
+      const artifacts = payload.artifacts || [];
+      const activity = payload.activity || [];
+      const dependencies = payload.dependencies || [];
+      
       const meta = [
         handleLabel(task.owner_handle),
-        task.status,
+        task.status || 'unknown',
         task.artifact_goal || '-',
       ];
       if(task.claimed_by_handle) meta.push(`claimed by ${task.claimed_by_handle}`);
       const review = reviewStateLabel(task);
       if(review) meta.push(review);
+      
       setTaskDetailOpen(true);
       taskDetailTitleEl.textContent = task.title || '작업 상세';
       taskDetailMetaEl.textContent = meta.join(' · ');
       taskDetailDescriptionEl.textContent = task.description || '-';
-      const owners = Array.from(new Set((payload.run?.selected_agents || []).filter(Boolean)));
-      const reviewable = ['reviewed', 'approved', 'rejected'].includes(task.review_state) || task.latest_artifact_type === 'review_notes';
+      
+      const selected = run.selected_agents || currentSelectedAgents() || [];
+      const owners = Array.from(new Set(selected.filter(Boolean)));
+      const reviewable = ['reviewed', 'approved', 'rejected', 'review'].includes(task.review_state || task.status);
+      
       taskOwnerSelectEl.innerHTML = owners.map(handle => {
-        const selected = handle === task.owner_handle ? 'selected' : '';
-        return `<option value="${esc(handle)}" ${selected}>${esc(handleLabel(handle))}</option>`;
+        const selectedAttr = handle === task.owner_handle ? 'selected' : '';
+        return `<option value="${esc(handle)}" ${selectedAttr}>${esc(handleLabel(handle))}</option>`;
       }).join('');
+      
       taskOwnerSelectEl.disabled = owners.length === 0;
       applyOwnerBtnEl.disabled = owners.length === 0;
       rerunTaskBtnEl.disabled = false;
@@ -1539,25 +1548,32 @@
       unblockTaskBtnEl.disabled = task.status !== 'blocked';
       approveReviewBtnEl.disabled = !reviewable;
       rejectReviewBtnEl.disabled = !reviewable;
+      
       editTaskTitleEl.value = task.title || '';
       editTaskGoalEl.innerHTML = artifactGoalOptions(task.artifact_goal || 'draft');
       editTaskPriorityEl.value = task.priority || 50;
       editTaskDescriptionEl.value = task.description || '';
       editTaskReviewEl.checked = Boolean(task.review_required);
+      
       const selectedDeps = new Set((task.depends_on_task_ids || []).map(String));
-      editTaskDepsEl.innerHTML = (payload.available_dependencies || []).map(item => {
-        const selected = selectedDeps.has(item.id) ? 'selected' : '';
-        return `<option value="${esc(item.id)}" ${selected}>${esc(item.title)} · ${esc(handleLabel(item.owner_handle))} · ${esc(item.status)}</option>`;
+      const availDeps = payload.available_dependencies || [];
+      editTaskDepsEl.innerHTML = availDeps.map(item => {
+        const selectedAttr = selectedDeps.has(String(item.id)) ? 'selected' : '';
+        return `<option value="${esc(item.id)}" ${selectedAttr}>${esc(item.title)} · ${esc(handleLabel(item.owner_handle))} · ${esc(item.status)}</option>`;
       }).join('');
+      
       saveTaskEditBtnEl.disabled = false;
       saveTaskDepsBtnEl.disabled = false;
-      taskDetailDependenciesEl.innerHTML = (payload.dependencies || []).map(dep => {
+      
+      taskDetailDependenciesEl.innerHTML = dependencies.map(dep => {
         return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(dep.title)}</div><div class="task-meta">${esc(handleLabel(dep.owner_handle))} · ${esc(dep.status)} · ${esc(dep.artifact_goal || '-')}</div></div>`;
       }).join('') || '<div class="task-empty">선행 작업 없음</div>';
-      taskDetailArtifactsEl.innerHTML = (payload.artifacts || []).map(item => {
+      
+      taskDetailArtifactsEl.innerHTML = artifacts.map(item => {
         return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(item.artifact_type)} v${esc(item.version || 1)}</div><div class="task-meta">${esc(handleLabel(item.created_by_handle))} · ${esc(item.created_at)}</div><div class="task-detail-body">${esc(item.content || '')}</div></div>`;
       }).join('') || '<div class="task-empty">아직 저장된 산출물이 없습니다.</div>';
-      taskDetailActivityEl.innerHTML = (payload.activity || []).map(item => {
+      
+      taskDetailActivityEl.innerHTML = activity.map(item => {
         const actor = item.actor_handle ? `${handleLabel(item.actor_handle)} · ` : '';
         return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(item.summary || '활동 기록')}</div><div class="task-meta">${esc(actor + (item.event_type || 'activity'))} · ${esc(item.created_at)}</div></div>`;
       }).join('') || '<div class="task-empty">아직 기록된 작업 이력이 없습니다.</div>';
@@ -1569,16 +1585,18 @@
         return;
       }
       const availableTaskIds = new Set(tasks.map(task => task.id));
+      // 사용자가 직접 선택한 selectedTaskId가 유효한 경우에만 동기화 수행
       if(!selectedTaskId || !availableTaskIds.has(selectedTaskId)){
-        selectedTaskId = (tasks.find(task => task.status !== 'done') || tasks[0] || {}).id || null;
-      }
-      if(!selectedTaskId){
-        renderTaskDetail(null);
+        // 자동으로 선택하지 않음
         return;
       }
-      const detail = await api(`/web/tasks/${selectedTaskId}`);
-      renderTaskDetail(detail);
-      renderBoard(tasks);
+      try {
+        const detail = await api(`/web/tasks/${selectedTaskId}`);
+        renderTaskDetail(detail);
+        renderBoard(tasks);
+      } catch (err) {
+        console.error("Failed to sync task detail:", err);
+      }
     }
 
     async function applyTeamSnapshot(data){
