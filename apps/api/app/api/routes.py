@@ -133,8 +133,8 @@ OUTPUT_TYPE_PRESET_MAP = {
 }
 
 
-@router.get("/", include_in_schema=False)
-def root():
+@router.get("/api/docs-redirect", include_in_schema=False)
+def docs_redirect():
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/docs")
 
