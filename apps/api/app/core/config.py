@@ -1,38 +1,40 @@
 import os
 from pathlib import Path
 
-# Absolute path to apps/api/ — used to resolve relative paths in .env
-_API_ROOT = Path(__file__).resolve().parents[2]
+# Absolute project and API roots
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_API_ROOT = _PROJECT_ROOT / "apps" / "api"
 
 
-def _resolve_path(value: str) -> str:
-    """Convert a ./ relative path to absolute using _API_ROOT as base.
-    Only paths starting with ./ or ../ are resolved; others are returned as-is
-    so that env-var overrides like AGENT_CONFIG_PATH=apps/api/config/agents.yaml
-    remain relative to the caller's CWD as intended.
-    """
-    if value.startswith("./") or value.startswith("../"):
-        return str((_API_ROOT / value).resolve())
-    return value
+def _resolve_path(value: str, *, base: Path | None = None) -> str:
+    """Resolve relative filesystem paths as absolute paths."""
+    raw = str(value or "").strip()
+    if not raw:
+        return raw
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return str(candidate)
+    root = base or _PROJECT_ROOT
+    return str((root / raw).resolve())
 
 
 def _load_local_env_file() -> None:
-    """Load apps/api/.env into process env if not already set."""
-    env_path = _API_ROOT / ".env"
-    if not env_path.exists():
-        return
-    for raw in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    """Load local .env files with precedence: apps/api/.env then project .env."""
+    for env_path in (_API_ROOT / ".env", _PROJECT_ROOT / ".env"):
+        if not env_path.exists():
             continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
 
 
 _load_local_env_file()
@@ -43,16 +45,16 @@ class Settings:
     app_version: str = os.getenv("APP_VERSION", "0.2.0")
 
     # ── Path settings — all resolved to absolute paths ────────────────────────
-    # SQLite URL: convert sqlite:///./foo.db → sqlite:////absolute/path/foo.db
-    _raw_db_url: str = os.getenv("DATABASE_URL", "sqlite:///./docflow.db")
+    # SQLite URL: canonical default under project storage/db
+    _raw_db_url: str = os.getenv("DATABASE_URL", "sqlite:///storage/db/docflow.db")
     database_url: str = (
-        "sqlite:///" + _resolve_path(_raw_db_url[len("sqlite:///"):])
+        "sqlite:///" + _resolve_path(_raw_db_url[len("sqlite:///"):], base=_PROJECT_ROOT)
         if _raw_db_url.startswith("sqlite:///")
         else _raw_db_url
     )
-    upload_dir: str = _resolve_path(os.getenv("UPLOAD_DIR", "./storage/uploads"))
-    dead_letter_dir: str = _resolve_path(os.getenv("DEAD_LETTER_DIR", "./storage/dead_letter"))
-    agent_config_path: str = _resolve_path(os.getenv("AGENT_CONFIG_PATH", "./config/agents.yaml"))
+    upload_dir: str = _resolve_path(os.getenv("UPLOAD_DIR", "storage/uploads"), base=_PROJECT_ROOT)
+    dead_letter_dir: str = _resolve_path(os.getenv("DEAD_LETTER_DIR", "storage/dead_letter"), base=_PROJECT_ROOT)
+    agent_config_path: str = _resolve_path(os.getenv("AGENT_CONFIG_PATH", "apps/api/config/agents.yaml"), base=_PROJECT_ROOT)
     auto_create_tables: bool = os.getenv("AUTO_CREATE_TABLES", "true").lower() == "true"
     llm_provider: str = os.getenv("LLM_PROVIDER", "stub")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")

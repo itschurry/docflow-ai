@@ -66,7 +66,7 @@ EXECUTION_BACKEND=celery
 REDIS_URL=redis://localhost:6379/0
 QUEUE_MAX_RETRIES=3
 QUEUE_RETRY_DELAY_SECONDS=5
-DEAD_LETTER_DIR=./storage/dead_letter
+DEAD_LETTER_DIR=storage/dead_letter
 OPS_API_TOKEN=change-this-secret
 ```
 
