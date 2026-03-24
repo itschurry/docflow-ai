@@ -160,12 +160,98 @@ def _parse_agent_payload(text: str) -> dict[str, Any]:
     # Extract first JSON object block when model adds explanatory wrappers.
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
-        return {}
+        return _recover_json_like_payload(text)
     try:
         obj = json.loads(match.group(0))
         return obj if isinstance(obj, dict) else {}
     except json.JSONDecodeError:
-        return {}
+        return _recover_json_like_payload(match.group(0))
+
+
+def _recover_json_like_payload(text: str) -> dict[str, Any]:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[len("```json"):].strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned[len("```"):].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+
+    recovered: dict[str, Any] = {}
+    for field in ("visible_message", "suggested_next_agent", "handoff_reason", "task_status", "recommended_mode"):
+        value = _extract_json_like_string(cleaned, field)
+        if value is not None:
+            recovered[field] = value
+    for field in ("done", "needs_user_input", "replace_latest"):
+        value = _extract_json_like_bool(cleaned, field)
+        if value is not None:
+            recovered[field] = value
+    confidence = _extract_json_like_number(cleaned, "confidence")
+    if confidence is not None:
+        recovered["confidence"] = confidence
+
+    artifact_type = _extract_json_like_string(cleaned, "type")
+    artifact_content = _extract_artifact_content(cleaned)
+    replace_latest = _extract_json_like_bool(cleaned, "replace_latest")
+    if artifact_type or artifact_content:
+        recovered["artifact_update"] = {
+            "type": artifact_type or "",
+            "content": artifact_content or "",
+            "replace_latest": True if replace_latest is None else replace_latest,
+        }
+    return recovered
+
+
+def _extract_json_like_string(text: str, field: str) -> str | None:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"((?:[^"\\]|\\.|"(?!\s*,\s*"[A-Za-z_]))*)"', text, re.DOTALL)
+    if not match:
+        return None
+    return _decode_json_like_string(match.group(1))
+
+
+def _extract_json_like_bool(text: str, field: str) -> bool | None:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*(true|false)', text, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).lower() == "true"
+
+
+def _extract_json_like_number(text: str, field: str) -> float | None:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*(-?\d+(?:\.\d+)?)', text)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_artifact_content(text: str) -> str | None:
+    match = re.search(
+        r'"content"\s*:\s*"(?P<content>.*?)(?="\s*,\s*"replace_latest"|\s*}\s*}\s*$)',
+        text,
+        re.DOTALL,
+    )
+    if match:
+        return _decode_json_like_string(match.group("content"))
+    fallback = re.search(r'"content"\s*:\s*"(?P<content>.*)$', text, re.DOTALL)
+    if not fallback:
+        return None
+    tail = fallback.group("content")
+    tail = re.sub(r'"\s*,?\s*```?\s*$', "", tail, flags=re.DOTALL).strip()
+    return _decode_json_like_string(tail)
+
+
+def _decode_json_like_string(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    text = text.replace('\\"', '"')
+    text = text.replace("\\n", "\n")
+    text = text.replace("\\t", "\t")
+    text = text.replace("\\r", "\r")
+    text = text.replace("\\/", "/")
+    return text.strip()
 
 
 def _to_float(value: Any) -> float | None:

@@ -6,6 +6,8 @@ from app.conversation_models import (
     ConversationModel,
     MessageModel,
     TeamActivityEventModel,
+    TeamInboxMessageModel,
+    TeamMemberSessionModel,
     TeamRunModel,
     TeamTaskDependencyModel,
     TeamTaskModel,
@@ -105,7 +107,9 @@ def serialize_team_run(run: TeamRunModel) -> dict:
         "conversation_id": str(run.conversation_id) if run.conversation_id else None,
         "title": run.title,
         "mode": run.mode,
+        "oversight_mode": run.oversight_mode,
         "status": run.status,
+        "plan_status": run.plan_status,
         "requested_by": run.requested_by,
         "request_text": run.request_text,
         "selected_agents": list(run.selected_agents or []),
@@ -123,8 +127,12 @@ def serialize_team_task(task: TeamTaskModel) -> dict:
         "description": task.description,
         "owner_handle": task.owner_handle,
         "status": task.status,
+        "claim_status": task.claim_status,
         "priority": task.priority,
         "artifact_goal": task.artifact_goal,
+        "task_kind": task.task_kind,
+        "claimed_by_session_id": str(task.claimed_by_session_id) if task.claimed_by_session_id else None,
+        "claim_expires_at": task.claim_expires_at.isoformat() if task.claim_expires_at else None,
         "parent_task_id": str(task.parent_task_id) if task.parent_task_id else None,
         "created_by_handle": task.created_by_handle,
         "review_required": task.review_required,
@@ -153,4 +161,36 @@ def serialize_team_activity(event: TeamActivityEventModel) -> dict:
         "summary": event.summary,
         "payload": event.payload,
         "created_at": event.created_at.isoformat(),
+    }
+
+
+def serialize_team_session(session: TeamMemberSessionModel) -> dict:
+    return {
+        "id": str(session.id),
+        "team_run_id": str(session.team_run_id),
+        "handle": session.handle,
+        "role": session.role,
+        "display_name": session.display_name,
+        "status": session.status,
+        "current_task_id": str(session.current_task_id) if session.current_task_id else None,
+        "context_window_summary": session.context_window_summary,
+        "inbox_cursor": session.inbox_cursor,
+        "last_heartbeat_at": session.last_heartbeat_at.isoformat() if session.last_heartbeat_at else None,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+    }
+
+
+def serialize_team_message(item: TeamInboxMessageModel) -> dict:
+    return {
+        "id": str(item.id),
+        "team_run_id": str(item.team_run_id),
+        "from_session_id": str(item.from_session_id) if item.from_session_id else None,
+        "to_session_id": str(item.to_session_id) if item.to_session_id else None,
+        "related_task_id": str(item.related_task_id) if item.related_task_id else None,
+        "message_type": item.message_type,
+        "subject": item.subject,
+        "content": item.content,
+        "status": item.status,
+        "created_at": item.created_at.isoformat(),
     }

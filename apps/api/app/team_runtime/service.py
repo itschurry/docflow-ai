@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -6,6 +7,8 @@ from sqlalchemy import delete
 
 from app.conversation_models import (
     TeamActivityEventModel,
+    TeamInboxMessageModel,
+    TeamMemberSessionModel,
     TeamRunModel,
     TeamTaskDependencyModel,
     TeamTaskModel,
@@ -23,6 +26,7 @@ class TeamRunService:
         conversation_id: uuid.UUID | None,
         title: str,
         mode: str,
+        oversight_mode: str = "auto",
         requested_by: str,
         request_text: str = "",
         selected_agents: list[str] | None = None,
@@ -32,6 +36,8 @@ class TeamRunService:
             conversation_id=conversation_id,
             title=title,
             mode=mode,
+            oversight_mode=oversight_mode,
+            plan_status="pending",
             requested_by=requested_by,
             request_text=request_text,
             selected_agents=list(selected_agents or []),
@@ -80,9 +86,11 @@ class TeamRunService:
         artifact_goal: str,
         created_by_handle: str | None = None,
         status: str = "todo",
+        claim_status: str = "open",
         priority: int = 50,
         parent_task_id: uuid.UUID | None = None,
         review_required: bool = False,
+        task_kind: str = "draft",
     ) -> TeamTaskModel:
         task = TeamTaskModel(
             team_run_id=team_run_id,
@@ -92,9 +100,11 @@ class TeamRunService:
             artifact_goal=artifact_goal,
             created_by_handle=created_by_handle,
             status=status,
+            claim_status=claim_status,
             priority=priority,
             parent_task_id=parent_task_id,
             review_required=review_required,
+            task_kind=task_kind,
         )
         self.db.add(task)
         self.db.flush()
@@ -123,6 +133,192 @@ class TeamRunService:
             .order_by(TeamTaskModel.priority.asc(), TeamTaskModel.created_at.asc())
             .all()
         )
+
+    def create_session(
+        self,
+        *,
+        team_run_id: uuid.UUID,
+        handle: str,
+        role: str = "worker",
+        display_name: str = "",
+        status: str = "idle",
+    ) -> TeamMemberSessionModel:
+        session = TeamMemberSessionModel(
+            team_run_id=team_run_id,
+            handle=handle,
+            role=role,
+            display_name=display_name or handle,
+            status=status,
+            last_heartbeat_at=now_utc(),
+        )
+        self.db.add(session)
+        self.db.flush()
+        return session
+
+    def get_session(self, session_id: uuid.UUID) -> TeamMemberSessionModel | None:
+        return self.db.get(TeamMemberSessionModel, session_id)
+
+    def list_sessions(self, team_run_id: uuid.UUID) -> list[TeamMemberSessionModel]:
+        return (
+            self.db.query(TeamMemberSessionModel)
+            .filter(TeamMemberSessionModel.team_run_id == team_run_id)
+            .order_by(TeamMemberSessionModel.created_at.asc())
+            .all()
+        )
+
+    def find_session_by_handle(
+        self,
+        team_run_id: uuid.UUID,
+        handle: str,
+    ) -> TeamMemberSessionModel | None:
+        return (
+            self.db.query(TeamMemberSessionModel)
+            .filter(
+                TeamMemberSessionModel.team_run_id == team_run_id,
+                TeamMemberSessionModel.handle == handle,
+            )
+            .order_by(TeamMemberSessionModel.created_at.asc())
+            .first()
+        )
+
+    def list_sessions_by_handle(
+        self,
+        team_run_id: uuid.UUID,
+        handle: str,
+    ) -> list[TeamMemberSessionModel]:
+        return (
+            self.db.query(TeamMemberSessionModel)
+            .filter(
+                TeamMemberSessionModel.team_run_id == team_run_id,
+                TeamMemberSessionModel.handle == handle,
+            )
+            .order_by(TeamMemberSessionModel.last_heartbeat_at.asc(), TeamMemberSessionModel.created_at.asc())
+            .all()
+        )
+
+    def update_session(self, session_id: uuid.UUID, **fields: Any) -> TeamMemberSessionModel | None:
+        session = self.db.get(TeamMemberSessionModel, session_id)
+        if not session:
+            return None
+        for key, value in fields.items():
+            if hasattr(session, key):
+                setattr(session, key, value)
+        session.updated_at = now_utc()
+        session.last_heartbeat_at = now_utc()
+        run = self.db.get(TeamRunModel, session.team_run_id)
+        if run:
+            run.updated_at = now_utc()
+        return session
+
+    def create_inbox_message(
+        self,
+        *,
+        team_run_id: uuid.UUID,
+        content: str,
+        subject: str = "",
+        message_type: str = "direct",
+        from_session_id: uuid.UUID | None = None,
+        to_session_id: uuid.UUID | None = None,
+        related_task_id: uuid.UUID | None = None,
+        status: str = "unread",
+    ) -> TeamInboxMessageModel:
+        item = TeamInboxMessageModel(
+            team_run_id=team_run_id,
+            from_session_id=from_session_id,
+            to_session_id=to_session_id,
+            related_task_id=related_task_id,
+            message_type=message_type,
+            subject=subject,
+            content=content,
+            status=status,
+        )
+        self.db.add(item)
+        self.db.flush()
+        run = self.db.get(TeamRunModel, team_run_id)
+        if run:
+            run.updated_at = now_utc()
+        return item
+
+    def list_inbox_messages(self, team_run_id: uuid.UUID, limit: int = 200) -> list[TeamInboxMessageModel]:
+        rows = (
+            self.db.query(TeamInboxMessageModel)
+            .filter(TeamInboxMessageModel.team_run_id == team_run_id)
+            .order_by(TeamInboxMessageModel.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return list(reversed(rows))
+
+    def list_session_inbox_messages(
+        self,
+        *,
+        team_run_id: uuid.UUID,
+        session_id: uuid.UUID,
+        include_read: bool = True,
+        limit: int = 40,
+    ) -> list[TeamInboxMessageModel]:
+        query = self.db.query(TeamInboxMessageModel).filter(
+            TeamInboxMessageModel.team_run_id == team_run_id,
+            (
+                (TeamInboxMessageModel.to_session_id == session_id)
+                | (TeamInboxMessageModel.to_session_id.is_(None))
+            ),
+        )
+        if not include_read:
+            query = query.filter(TeamInboxMessageModel.status == "unread")
+        rows = query.order_by(TeamInboxMessageModel.created_at.desc()).limit(limit).all()
+        return list(reversed(rows))
+
+    def mark_inbox_messages_read(self, message_ids: list[uuid.UUID]) -> None:
+        if not message_ids:
+            return
+        (
+            self.db.query(TeamInboxMessageModel)
+            .filter(TeamInboxMessageModel.id.in_(message_ids))
+            .update({"status": "read"}, synchronize_session=False)
+        )
+
+    def claim_task(
+        self,
+        *,
+        task_id: uuid.UUID,
+        session_id: uuid.UUID,
+        ttl_seconds: int = 900,
+    ) -> TeamTaskModel | None:
+        task = self.db.get(TeamTaskModel, task_id)
+        session = self.db.get(TeamMemberSessionModel, session_id)
+        if not task or not session or task.team_run_id != session.team_run_id:
+            return None
+        task.claim_status = "claimed"
+        task.claimed_by_session_id = session_id
+        task.claim_expires_at = now_utc() + timedelta(seconds=max(ttl_seconds, 60))
+        task.updated_at = now_utc()
+        session.current_task_id = task.id
+        session.status = "busy"
+        session.updated_at = now_utc()
+        session.last_heartbeat_at = now_utc()
+        return task
+
+    def release_task_claim(
+        self,
+        task_id: uuid.UUID,
+        *,
+        reset_status: str | None = None,
+    ) -> TeamTaskModel | None:
+        task = self.db.get(TeamTaskModel, task_id)
+        if not task:
+            return None
+        session = self.db.get(TeamMemberSessionModel, task.claimed_by_session_id) if task.claimed_by_session_id else None
+        if session:
+            session.current_task_id = None
+            session.status = "idle"
+            session.updated_at = now_utc()
+            session.last_heartbeat_at = now_utc()
+        task.claimed_by_session_id = None
+        task.claim_expires_at = None
+        task.claim_status = reset_status or "open"
+        task.updated_at = now_utc()
+        return task
 
     def add_dependency(
         self,
@@ -225,5 +421,6 @@ class TeamRunService:
             task
             for task in tasks
             if task.status == "todo"
+            and task.claim_status == "open"
             and deps_by_task.get(task.id, set()).issubset(done_ids)
         ]

@@ -188,7 +188,9 @@ class TeamRunModel(Base):
     )
     title: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     mode: Mapped[str] = mapped_column(String(30), default="team-autonomous", nullable=False)
+    oversight_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="idle", nullable=False)
+    plan_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)
     requested_by: Mapped[str] = mapped_column(String(100), default="web_user", nullable=False)
     request_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     selected_agents: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
@@ -214,8 +216,15 @@ class TeamTaskModel(Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     owner_handle: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="todo", nullable=False)
+    claim_status: Mapped[str] = mapped_column(String(20), default="open", nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     artifact_goal: Mapped[str] = mapped_column(String(50), default="", nullable=False)
+    task_kind: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
+    claimed_by_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_member_sessions.id", ondelete="SET NULL"),
+    )
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     parent_task_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("team_tasks.id", ondelete="SET NULL"),
@@ -263,4 +272,58 @@ class TeamActivityEventModel(Base):
     target_handle: Mapped[str | None] = mapped_column(String(100))
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, nullable=False)
+
+
+class TeamMemberSessionModel(Base):
+    __tablename__ = "team_member_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    handle: Mapped[str] = mapped_column(String(100), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), default="worker", nullable=False)
+    display_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="idle", nullable=False)
+    current_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_tasks.id", ondelete="SET NULL"),
+    )
+    context_window_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    inbox_cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, nullable=False)
+
+
+class TeamInboxMessageModel(Base):
+    __tablename__ = "team_inbox_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_member_sessions.id", ondelete="SET NULL"),
+    )
+    to_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_member_sessions.id", ondelete="SET NULL"),
+    )
+    related_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("team_tasks.id", ondelete="SET NULL"),
+    )
+    message_type: Mapped[str] = mapped_column(String(30), default="direct", nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="unread", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, nullable=False)

@@ -6,105 +6,382 @@
   <title>DocFlow Agent Team Workspace</title>
   <style>
     :root {
-      --bg: #080b13;
-      --panel: #0f1320;
-      --panel2: #11182a;
-      --line: #232c42;
-      --text: #e9edf7;
-      --muted: #97a3bd;
-      --chip: #1b2338;
-      --user: #1a3552;
-      --agent: #192534;
-      --planner: #24365a;
-      --writer: #204238;
-      --critic: #4a2532;
-      --coder: #2f2957;
+      --bg: #071019;
+      --bg2: #0b1623;
+      --surface: rgba(10, 20, 31, 0.8);
+      --surface-strong: rgba(13, 24, 37, 0.94);
+      --surface-soft: rgba(16, 28, 42, 0.78);
+      --line: rgba(197, 214, 235, 0.14);
+      --line-strong: rgba(223, 190, 119, 0.28);
+      --text: #edf2f7;
+      --muted: #92a0b3;
+      --accent: #d9b86c;
+      --accent-soft: rgba(217, 184, 108, 0.14);
+      --success: #8fcfb9;
+      --danger: #f4a3a3;
+      --chip: rgba(255,255,255,0.05);
+      --planner: rgba(84, 132, 203, 0.16);
+      --writer: rgba(77, 164, 136, 0.14);
+      --critic: rgba(186, 94, 122, 0.16);
+      --coder: rgba(124, 119, 215, 0.16);
+      --font-ui: "IBM Plex Sans KR", "Avenir Next", "Segoe UI", sans-serif;
+      --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
       color-scheme: dark;
     }
     * { box-sizing: border-box; }
-    body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
-    .layout { display:grid; grid-template-columns: 290px 1fr; min-height:100vh; }
-    .side { border-right:1px solid var(--line); background:linear-gradient(180deg,#0d1220,#0a0f1a); padding:14px; }
-    .brand { display:flex; align-items:center; gap:10px; font-weight:700; margin-bottom:14px; }
-    .dot { width:24px; height:24px; border-radius:8px; background:linear-gradient(135deg,#74b0ff,#9e6dff); }
-    .card { border:1px solid var(--line); background:var(--panel); border-radius:12px; padding:10px; margin-bottom:10px; }
-    .row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    html, body { min-height:100%; }
+    body {
+      margin:0;
+      font-family: var(--font-ui);
+      color:var(--text);
+      background:
+        radial-gradient(1200px 700px at 8% -10%, rgba(217,184,108,0.16), transparent 50%),
+        radial-gradient(900px 540px at 100% 0%, rgba(103,147,205,0.18), transparent 48%),
+        linear-gradient(180deg, var(--bg2), var(--bg));
+    }
+    .layout { display:grid; grid-template-columns: 320px minmax(0, 1fr); min-height:100vh; }
+    .side {
+      position:relative;
+      border-right:1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(12,23,34,0.96), rgba(8,16,25,0.98)),
+        var(--bg);
+      padding:22px 20px 24px;
+    }
+    .side::after {
+      content:"";
+      position:absolute;
+      inset:auto 20px 0 20px;
+      height:1px;
+      background:linear-gradient(90deg, transparent, rgba(217,184,108,0.4), transparent);
+    }
+    .brand {
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:22px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .brand-copy { display:grid; gap:2px; }
+    .brand-copy b { color:var(--text); font-size:14px; letter-spacing:.1em; }
+    .dot {
+      width:30px;
+      height:30px;
+      border-radius:10px;
+      background:linear-gradient(135deg, var(--accent), #7ca8d4 70%);
+      box-shadow:0 0 28px rgba(217,184,108,0.24);
+    }
+    .card {
+      margin-bottom:14px;
+      padding:14px 14px 16px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:var(--surface);
+      backdrop-filter: blur(18px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+      animation: riseIn .45s ease both;
+    }
+    .card b { font-size:13px; letter-spacing:.02em; }
+    .row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
     .mini { font-size:12px; color:var(--muted); }
     .agents { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-    .agent-chip { border:1px solid var(--line); background:var(--chip); border-radius:999px; padding:5px 10px; font-size:12px; }
+    .agent-chip {
+      border:1px solid rgba(255,255,255,0.08);
+      background:var(--chip);
+      border-radius:999px;
+      padding:6px 11px;
+      font-size:12px;
+      backdrop-filter: blur(10px);
+    }
     .agent-chip input { margin-right:6px; }
-    .main { display:flex; flex-direction:column; min-height:100vh; }
-    .top { border-bottom:1px solid var(--line); padding:12px 16px; display:flex; justify-content:space-between; align-items:center; background:#0b1020; }
-    .title { font-weight:700; }
-    .live { display:flex; gap:6px; flex-wrap:wrap; }
-    .live .agent-chip { background:#141d30; }
-    .chat { flex:1; overflow:auto; padding:16px; background:radial-gradient(800px 500px at 50% -20%, #152038 0%, #090d18 55%, #080b13 100%); }
+    .main {
+      min-height:100vh;
+      display:grid;
+      grid-template-rows:auto 1fr auto;
+    }
+    .top {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) minmax(280px, 360px);
+      gap:20px;
+      align-items:end;
+      padding:26px 28px 18px;
+    }
+    .kicker {
+      font-size:11px;
+      letter-spacing:.18em;
+      text-transform:uppercase;
+      color:var(--accent);
+      margin-bottom:10px;
+    }
+    .title {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 4vw, 52px);
+      line-height:.95;
+      letter-spacing:-.03em;
+      margin:0 0 10px 0;
+    }
+    .subtitle {
+      max-width:640px;
+      font-size:14px;
+      line-height:1.55;
+      color:#cfd8e6;
+      margin-bottom:12px;
+    }
+    .status-strip {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:7px 11px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,0.03);
+      color:var(--muted);
+    }
+    .status-strip::before {
+      content:"";
+      width:8px;
+      height:8px;
+      border-radius:999px;
+      background:var(--accent);
+      box-shadow:0 0 16px rgba(217,184,108,0.45);
+    }
+    .top-side {
+      display:grid;
+      gap:10px;
+      justify-items:end;
+    }
+    .top-label {
+      font-size:11px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:var(--muted);
+    }
+    .live {
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .live .agent-chip {
+      background:rgba(255,255,255,0.06);
+    }
+    .workspace-grid {
+      display:grid;
+      grid-template-columns:minmax(0, 1.35fr) minmax(320px, .95fr);
+      gap:18px;
+      padding:0 24px 22px;
+      align-items:start;
+    }
+    .primary-column,
+    .secondary-column {
+      display:grid;
+      gap:18px;
+      align-content:start;
+      min-width:0;
+    }
+    .section-panel,
+    .deliverable-box,
+    .progress-box,
+    .plan-box,
+    .session-box,
+    .message-box,
+    .board-box,
+    .task-detail-box,
+    .task-create-box {
+      border:1px solid var(--line);
+      border-radius:22px;
+      background:var(--surface-strong);
+      backdrop-filter: blur(18px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+      animation: riseIn .5s ease both;
+    }
     .deliverable-box {
-      margin: 10px 16px 0 16px;
-      border:1px solid #32507c;
-      background:linear-gradient(180deg,#13253f,#101f35);
-      border-radius:12px;
-      padding:10px 12px;
+      padding:18px 20px 20px;
+      border-color: var(--line-strong);
+      background:
+        radial-gradient(700px 260px at 0% 0%, rgba(217,184,108,0.14), transparent 55%),
+        linear-gradient(180deg, rgba(21, 27, 34, 0.96), rgba(13, 23, 35, 0.98));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.04),
+        0 18px 60px rgba(0,0,0,0.22);
     }
-    .deliverable-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); margin-bottom:6px; }
-    .deliverable-body { white-space:pre-wrap; line-height:1.45; max-height:220px; overflow:auto; }
+    .deliverable-head {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:10px;
+    }
+    .deliverable-head b {
+      display:block;
+      font-size:18px;
+      color:var(--text);
+      margin-bottom:4px;
+      font-family: var(--font-display);
+      letter-spacing:.01em;
+    }
+    .deliverable-body {
+      white-space:pre-wrap;
+      line-height:1.6;
+      max-height:320px;
+      overflow:auto;
+      font-size:14px;
+      padding-right:4px;
+    }
     .progress-box {
-      margin: 10px 16px 0 16px;
-      border:1px solid #395240;
-      background:linear-gradient(180deg,#132119,#101a15);
-      border-radius:12px;
-      padding:10px 12px;
+      padding:16px 18px;
+      background:linear-gradient(180deg, rgba(14, 28, 23, 0.94), rgba(12, 19, 17, 0.98));
     }
-    .progress-head { font-size:12px; color:var(--muted); margin-bottom:8px; }
+    .plan-box,
+    .session-box,
+    .message-box {
+      padding:16px 18px;
+    }
+    .progress-head {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:10px;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+    }
     .progress-list { display:grid; gap:8px; }
     .progress-step {
-      border:1px solid var(--line);
-      border-radius:10px;
-      background:#0d1522;
-      padding:10px 12px;
+      position:relative;
+      padding:10px 12px 10px 16px;
+      border-left:2px solid rgba(143, 207, 185, 0.48);
+      background:rgba(255,255,255,0.03);
+      border-radius:0 14px 14px 0;
     }
-    .progress-line { font-size:14px; line-height:1.4; }
+    .progress-line { font-size:14px; line-height:1.5; }
     .progress-meta { font-size:12px; color:var(--muted); margin-top:4px; }
-    .board-box {
-      margin: 10px 16px 0 16px;
-      border:1px solid #5d4a24;
-      background:linear-gradient(180deg,#211912,#1a1510);
-      border-radius:12px;
+    .panel-head {
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+    }
+    .plan-actions {
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top:10px;
+    }
+    .session-list,
+    .message-list {
+      display:grid;
+      gap:8px;
+    }
+    .session-item,
+    .message-item {
+      border:1px solid rgba(255,255,255,0.07);
+      border-radius:14px;
+      background:rgba(255,255,255,0.03);
       padding:10px 12px;
     }
-    .board-head { font-size:12px; color:var(--muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .session-title,
+    .message-title {
+      font-size:13px;
+      font-weight:600;
+      margin-bottom:4px;
+    }
+    .session-meta,
+    .message-meta {
+      font-size:11px;
+      color:var(--muted);
+      line-height:1.45;
+    }
+    .message-body {
+      margin-top:6px;
+      white-space:pre-wrap;
+      line-height:1.5;
+      font-size:12px;
+    }
+    .board-box {
+      padding:16px 16px 18px;
+      background:linear-gradient(180deg, rgba(25, 20, 14, 0.94), rgba(16, 14, 11, 0.98));
+    }
+    .board-head {
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+    }
     .board-columns { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); }
-    .board-col { border:1px solid var(--line); border-radius:10px; background:#0d1522; padding:10px; }
-    .board-col h4 { margin:0 0 8px 0; font-size:13px; }
-    .task-card { border:1px solid #2a3348; border-radius:10px; background:#101826; padding:8px 10px; margin-bottom:8px; cursor:pointer; transition:transform .12s ease, border-color .12s ease, background .12s ease; }
-    .task-card:hover { transform:translateY(-1px); border-color:#4d648b; background:#122034; }
-    .task-card.active { border-color:#7aa2ff; background:#15243d; box-shadow:0 0 0 1px rgba(122,162,255,.25) inset; }
+    .board-col {
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:rgba(255,255,255,0.03);
+      padding:12px;
+      min-height:180px;
+    }
+    .board-col h4 {
+      margin:0 0 10px 0;
+      font-size:12px;
+      letter-spacing:.1em;
+      text-transform:uppercase;
+      color:#dcc48a;
+    }
+    .task-card {
+      border:1px solid rgba(255,255,255,0.06);
+      border-radius:16px;
+      background:rgba(255,255,255,0.04);
+      padding:10px 12px;
+      margin-bottom:8px;
+      cursor:pointer;
+      transition:transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+    }
+    .task-card:hover {
+      transform:translateY(-2px);
+      border-color:rgba(217,184,108,0.28);
+      background:rgba(255,255,255,0.06);
+      box-shadow:0 14px 26px rgba(0,0,0,0.14);
+    }
+    .task-card.active {
+      border-color:rgba(217,184,108,0.46);
+      background:rgba(217,184,108,0.08);
+      box-shadow:0 0 0 1px rgba(217,184,108,0.16) inset;
+    }
     .task-card:last-child { margin-bottom:0; }
-    .task-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+    .task-title { font-size:13px; font-weight:600; margin-bottom:4px; line-height:1.45; }
     .task-meta { font-size:12px; color:var(--muted); }
     .task-flags { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-    .task-badge { font-size:11px; padding:2px 7px; border-radius:999px; border:1px solid #36415c; color:#cbd5ea; background:#171f31; }
-    .task-badge.review { border-color:#7f5663; background:#2a1820; color:#ffced8; }
-    .task-badge.ready { border-color:#4c7c61; background:#13261b; color:#c4f2d1; }
-    .task-badge.artifact { border-color:#4b628d; background:#142036; color:#cddcff; }
+    .task-badge { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:#d5dcea; background:rgba(255,255,255,0.04); }
+    .task-badge.review { border-color:rgba(244, 163, 163, 0.32); background:rgba(244,163,163,0.1); color:#ffd7d7; }
+    .task-badge.ready { border-color:rgba(143, 207, 185, 0.34); background:rgba(143,207,185,0.1); color:#dcfff1; }
+    .task-badge.artifact { border-color:rgba(124, 168, 212, 0.34); background:rgba(124,168,212,0.1); color:#d9ebff; }
     .task-detail-box {
-      margin: 10px 16px 0 16px;
-      border:1px solid #314365;
-      background:linear-gradient(180deg,#101a2e,#0d1424);
-      border-radius:12px;
-      padding:10px 12px;
+      padding:16px 16px 18px;
+      background:linear-gradient(180deg, rgba(13, 24, 38, 0.96), rgba(11, 18, 29, 0.98));
     }
     .task-detail-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
-    .task-detail-title { font-size:15px; font-weight:700; }
+    .task-detail-title { font-size:17px; font-weight:700; }
     .task-detail-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .task-detail-actions select,
     .task-detail-actions button { font-size:12px; padding:8px 10px; }
     .task-detail-grid { display:grid; grid-template-columns:1.3fr .9fr; gap:12px; }
-    .task-detail-card { border:1px solid var(--line); border-radius:10px; background:#0d1522; padding:10px; }
+    .task-detail-card { border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,0.03); padding:12px; }
     .task-detail-card b { display:block; margin-bottom:6px; font-size:12px; color:var(--muted); }
     .task-detail-body { white-space:pre-wrap; line-height:1.45; font-size:13px; }
     .task-detail-list { display:grid; gap:8px; }
-    .task-detail-item { border:1px solid #263049; border-radius:10px; background:#101826; padding:8px 10px; }
+    .task-detail-item { border:1px solid rgba(255,255,255,0.06); border-radius:14px; background:rgba(255,255,255,0.04); padding:8px 10px; }
     .task-detail-item-title { font-size:13px; font-weight:600; margin-bottom:4px; }
     .task-empty { font-size:12px; color:var(--muted); }
     .task-form-grid { display:grid; gap:8px; }
@@ -114,30 +391,54 @@
     .task-form-grid select[multiple] { min-height:110px; }
     .task-form-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     .task-create-box {
-      margin: 10px 16px 0 16px;
-      border:1px solid #3d5a39;
-      background:linear-gradient(180deg,#102015,#0c1710);
-      border-radius:12px;
-      padding:10px 12px;
+      padding:16px;
+      background:linear-gradient(180deg, rgba(13, 27, 20, 0.96), rgba(11, 18, 15, 0.98));
     }
     @media (max-width: 1100px) {
+      .layout { grid-template-columns:1fr; }
+      .side { border-right:none; border-bottom:1px solid var(--line); padding-bottom:20px; }
+      .top { grid-template-columns:1fr; padding:20px 18px 16px; }
+      .top-side { justify-items:start; }
+      .live { justify-content:flex-start; }
+      .workspace-grid { grid-template-columns:1fr; padding:0 16px 18px; }
       .task-detail-grid { grid-template-columns:1fr; }
       .task-form-grid.two,
       .task-form-grid.three { grid-template-columns:1fr; }
     }
-    .msg { margin:10px 0; border:1px solid var(--line); border-radius:12px; padding:10px 12px; max-width:900px; }
-    .msg.user { margin-left:auto; background:var(--user); }
-    .msg.agent { background:var(--agent); }
-    .msg.agent.role-planner { background:var(--planner); border-color:#3f5e95; }
-    .msg.agent.role-writer { background:var(--writer); border-color:#3a7f69; }
-    .msg.agent.role-critic { background:var(--critic); border-color:#a55a73; }
-    .msg.agent.role-coder { background:var(--coder); border-color:#6b62b3; }
+    .chat-panel {
+      min-height:340px;
+      display:grid;
+      grid-template-rows:auto minmax(220px, 1fr);
+      padding:16px 18px 10px;
+    }
+    .section-head {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:10px;
+      text-transform:uppercase;
+      letter-spacing:.1em;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .chat {
+      overflow:auto;
+      padding:4px 2px 10px;
+      min-height:240px;
+    }
+    .msg { margin:10px 0; border:1px solid var(--line); border-radius:18px; padding:12px 14px; max-width:920px; background:rgba(255,255,255,0.04); }
+    .msg.user { margin-left:auto; background:linear-gradient(180deg, rgba(28,53,84,0.82), rgba(20,39,63,0.92)); }
+    .msg.agent.role-planner { background:var(--planner); }
+    .msg.agent.role-writer { background:var(--writer); }
+    .msg.agent.role-critic { background:var(--critic); }
+    .msg.agent.role-coder { background:var(--coder); }
     .meta { font-size:12px; color:var(--muted); margin-bottom:6px; }
     .status-text { font-size:13px; line-height:1.45; }
     .typing {
       display:flex; align-items:center; gap:8px;
-      margin:10px 0; border:1px dashed var(--line); border-radius:12px;
-      padding:10px 12px; max-width:420px; background:#121a2c;
+      margin:10px 0; border:1px dashed var(--line); border-radius:16px;
+      padding:10px 12px; max-width:420px; background:rgba(255,255,255,0.04);
       color:var(--muted); font-size:13px;
     }
     .dots { display:inline-flex; gap:4px; }
@@ -148,21 +449,58 @@
     .dots i:nth-child(2){ animation-delay:.15s; }
     .dots i:nth-child(3){ animation-delay:.3s; }
     @keyframes blink { 0%,80%,100%{opacity:.25; transform:translateY(0)} 40%{opacity:1; transform:translateY(-2px)} }
-    .composer { border-top:1px solid var(--line); padding:12px; background:#0b1120; display:flex; gap:8px; }
+    .composer-wrap {
+      padding:0 24px 24px;
+      background:linear-gradient(180deg, transparent, rgba(7,16,25,0.92) 35%);
+    }
+    .composer {
+      display:flex;
+      gap:10px;
+      padding:12px;
+      border:1px solid var(--line);
+      border-radius:22px;
+      background:rgba(10, 20, 31, 0.9);
+      backdrop-filter: blur(18px);
+    }
     textarea, input, select, button {
-      border:1px solid var(--line); background:var(--panel2); color:var(--text); border-radius:10px; padding:10px;
+      border:1px solid var(--line);
+      background:var(--surface-soft);
+      color:var(--text);
+      border-radius:14px;
+      padding:11px 12px;
+      font: inherit;
     }
     textarea { flex:1; min-height:60px; resize:vertical; }
-    button { cursor:pointer; font-weight:600; }
+    button {
+      cursor:pointer;
+      font-weight:600;
+      transition:transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+    button:hover {
+      transform:translateY(-1px);
+      border-color:rgba(217,184,108,0.32);
+      background:rgba(217,184,108,0.08);
+    }
     .stack { display:grid; gap:8px; }
     .warn { color:#ffcc8a; font-size:12px; }
+    @keyframes riseIn {
+      from { opacity:0; transform:translateY(10px); }
+      to { opacity:1; transform:translateY(0); }
+    }
   </style>
 </head>
 <body>
   <div class="layout">
     <aside class="side">
-      <div class="brand"><div class="dot"></div> AGENT TEAM</div>
+      <div class="brand">
+        <div class="dot"></div>
+        <div class="brand-copy">
+          <span>DocFlow</span>
+          <b>Agent Team</b>
+        </div>
+      </div>
       <div class="card stack">
+        <div class="mini">Workspace Controls</div>
         <div class="row">
           <input id="sender" value="web_user" placeholder="보내는 사람" style="width:100%" />
         </div>
@@ -175,10 +513,15 @@
           </select>
         </div>
         <div class="row">
+          <select id="oversightMode" style="width:100%">
+            <option value="auto" selected>결과물만 받기 · auto</option>
+            <option value="manual">중간에 내가 개입 · manual</option>
+          </select>
+        </div>
+        <div class="row">
           <button id="newChat" style="flex:1">새 채팅방</button>
           <button id="refresh" style="flex:1">새로고침</button>
         </div>
-        <div class="mini" id="chatInfo">chat: -</div>
       </div>
 
       <div class="card">
@@ -192,108 +535,153 @@
 
     <main class="main">
       <div class="top">
-        <div class="title"># agent-discussion</div>
-        <div class="live" id="activeAgents"></div>
-      </div>
-      <div class="deliverable-box" id="deliverableBox" style="display:none">
-        <div class="deliverable-head">
-          <b>작업 결과물</b>
-          <button id="copyDeliverable">복사</button>
+        <div>
+          <div class="kicker">DocFlow Operations</div>
+          <div class="title">Agent Team Workspace</div>
+          <div class="subtitle">결과물은 크게 보고, 진행 상황은 짧게 추적하고, 필요할 때만 작업 보드에 개입하는 팀 실행 콘솔입니다.</div>
+          <div class="mini status-strip" id="chatInfo">chat: -</div>
         </div>
-        <div class="mini" id="deliverableMeta"></div>
-        <div class="deliverable-body" id="deliverableBody"></div>
-      </div>
-      <div class="progress-box" id="progressBox" style="display:none">
-        <div class="progress-head"><b>진행 현황</b></div>
-        <div class="progress-list" id="progressList"></div>
-      </div>
-      <div class="board-box" id="boardBox" style="display:none">
-        <div class="board-head"><b>작업 보드</b><button id="toggleCreateTaskBtn">새 작업 추가</button></div>
-        <div class="board-columns" id="boardColumns"></div>
-      </div>
-      <div class="task-create-box" id="taskCreateBox" style="display:none">
-        <div class="board-head"><b>새 작업 추가</b></div>
-        <div class="task-form-grid three">
-          <input id="createTaskTitle" placeholder="작업 제목" />
-          <select id="createTaskOwner"></select>
-          <select id="createTaskGoal"></select>
-        </div>
-        <div class="task-form-grid three" style="margin-top:8px">
-          <input id="createTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
-          <select id="createTaskParent"></select>
-          <select id="createTaskDeps" multiple></select>
-        </div>
-        <div class="task-form-grid" style="margin-top:8px">
-          <textarea id="createTaskDescription" placeholder="작업 설명"></textarea>
-        </div>
-        <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="createTaskReview" type="checkbox" /> 리뷰 필요</label>
-        <div class="task-form-actions">
-          <button id="createTaskBtn">작업 생성</button>
+        <div class="top-side">
+          <div class="top-label">Active Members</div>
+          <div class="live" id="activeAgents"></div>
         </div>
       </div>
-      <div class="task-detail-box" id="taskDetailBox" style="display:none">
-        <div class="task-detail-head">
-          <div>
-            <div class="task-detail-title" id="taskDetailTitle">작업 상세</div>
-            <div class="mini" id="taskDetailMeta"></div>
+      <div class="workspace-grid">
+        <section class="primary-column">
+          <div class="deliverable-box" id="deliverableBox" style="display:none">
+            <div class="deliverable-head">
+              <div>
+                <b>작업 결과물</b>
+                <div class="mini">현재 팀이 사용자에게 전달할 최종 산출물</div>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="exportDocxBtn" style="display:none">DOCX</button>
+                <button id="exportPptxBtn" style="display:none">PPTX</button>
+                <button id="copyDeliverable">복사</button>
+              </div>
+            </div>
+            <div class="mini" id="deliverableMeta"></div>
+            <div class="deliverable-body" id="deliverableBody"></div>
           </div>
-          <div class="task-detail-actions">
-            <select id="taskOwnerSelect"></select>
-            <button id="applyOwnerBtn">담당 변경</button>
-            <button id="rerunTaskBtn">재실행</button>
-            <button id="blockTaskBtn">차단</button>
-            <button id="unblockTaskBtn">차단 해제</button>
-            <button id="approveReviewBtn">검토 승인</button>
-            <button id="rejectReviewBtn">검토 반려</button>
+          <div class="progress-box" id="progressBox" style="display:none">
+            <div class="progress-head"><b>진행 현황</b><span>Request-to-Deliverable</span></div>
+            <div class="progress-list" id="progressList"></div>
           </div>
-        </div>
-        <div class="task-detail-grid">
-          <div class="task-detail-card">
-            <b>작업 설명</b>
-            <div class="task-detail-body" id="taskDetailDescription"></div>
+          <section class="section-panel chat-panel">
+            <div class="section-head">
+              <b>사용자 요청</b>
+              <span class="mini">원문 입력 로그</span>
+            </div>
+            <div class="chat" id="chat"></div>
+          </section>
+        </section>
+        <aside class="secondary-column">
+          <div class="plan-box" id="planBox" style="display:none">
+            <div class="panel-head"><b>Plan Gate</b><span class="mini" id="planMeta"></span></div>
+            <div class="mini" id="planSummary">실행 계획 상태를 확인합니다.</div>
+            <div class="plan-actions">
+              <button id="approvePlanBtn">계획 승인</button>
+              <button id="rejectPlanBtn">계획 반려</button>
+            </div>
           </div>
-          <div class="task-detail-card">
-            <b>의존 작업</b>
-            <div class="task-detail-list" id="taskDetailDependencies"></div>
+          <div class="session-box" id="sessionBox" style="display:none">
+            <div class="panel-head"><b>Sessions</b><span class="mini" id="sessionMeta"></span></div>
+            <div class="session-list" id="sessionList"></div>
           </div>
-          <div class="task-detail-card">
-            <b>산출물</b>
-            <div class="task-detail-list" id="taskDetailArtifacts"></div>
+          <div class="message-box" id="messageBox" style="display:none">
+            <div class="panel-head"><b>Inbox</b><span class="mini" id="messageMeta"></span></div>
+            <div class="message-list" id="messageList"></div>
           </div>
-          <div class="task-detail-card">
-            <b>작업 이력</b>
-            <div class="task-detail-list" id="taskDetailActivity"></div>
+          <div class="board-box" id="boardBox" style="display:none">
+            <div class="board-head"><b>작업 보드</b><button id="toggleCreateTaskBtn">새 작업 추가</button></div>
+            <div class="board-columns" id="boardColumns"></div>
           </div>
-          <div class="task-detail-card">
-            <b>작업 정의 수정</b>
+          <div class="task-create-box" id="taskCreateBox" style="display:none">
+            <div class="board-head"><b>새 작업 추가</b></div>
             <div class="task-form-grid three">
-              <input id="editTaskTitle" placeholder="작업 제목" />
-              <select id="editTaskGoal"></select>
-              <input id="editTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
+              <input id="createTaskTitle" placeholder="작업 제목" />
+              <select id="createTaskOwner"></select>
+              <select id="createTaskGoal"></select>
+            </div>
+            <div class="task-form-grid three" style="margin-top:8px">
+              <input id="createTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
+              <select id="createTaskParent"></select>
+              <select id="createTaskDeps" multiple></select>
             </div>
             <div class="task-form-grid" style="margin-top:8px">
-              <textarea id="editTaskDescription" placeholder="작업 설명"></textarea>
+              <textarea id="createTaskDescription" placeholder="작업 설명"></textarea>
             </div>
-            <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="editTaskReview" type="checkbox" /> 리뷰 필요</label>
+            <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="createTaskReview" type="checkbox" /> 리뷰 필요</label>
             <div class="task-form-actions">
-              <button id="saveTaskEditBtn">정의 저장</button>
+              <button id="createTaskBtn">작업 생성</button>
             </div>
           </div>
-          <div class="task-detail-card">
-            <b>선행 작업 편집</b>
-            <div class="task-form-grid">
-              <select id="editTaskDeps" multiple></select>
+          <div class="task-detail-box" id="taskDetailBox" style="display:none">
+            <div class="task-detail-head">
+              <div>
+                <div class="task-detail-title" id="taskDetailTitle">작업 상세</div>
+                <div class="mini" id="taskDetailMeta"></div>
+              </div>
+              <div class="task-detail-actions">
+                <select id="taskOwnerSelect"></select>
+                <button id="applyOwnerBtn">담당 변경</button>
+                <button id="rerunTaskBtn">재실행</button>
+                <button id="blockTaskBtn">차단</button>
+                <button id="unblockTaskBtn">차단 해제</button>
+                <button id="approveReviewBtn">검토 승인</button>
+                <button id="rejectReviewBtn">검토 반려</button>
+              </div>
             </div>
-            <div class="task-form-actions">
-              <button id="saveTaskDepsBtn">의존성 저장</button>
+            <div class="task-detail-grid">
+              <div class="task-detail-card">
+                <b>작업 설명</b>
+                <div class="task-detail-body" id="taskDetailDescription"></div>
+              </div>
+              <div class="task-detail-card">
+                <b>의존 작업</b>
+                <div class="task-detail-list" id="taskDetailDependencies"></div>
+              </div>
+              <div class="task-detail-card">
+                <b>산출물</b>
+                <div class="task-detail-list" id="taskDetailArtifacts"></div>
+              </div>
+              <div class="task-detail-card">
+                <b>작업 이력</b>
+                <div class="task-detail-list" id="taskDetailActivity"></div>
+              </div>
+              <div class="task-detail-card">
+                <b>작업 정의 수정</b>
+                <div class="task-form-grid three">
+                  <input id="editTaskTitle" placeholder="작업 제목" />
+                  <select id="editTaskGoal"></select>
+                  <input id="editTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
+                </div>
+                <div class="task-form-grid" style="margin-top:8px">
+                  <textarea id="editTaskDescription" placeholder="작업 설명"></textarea>
+                </div>
+                <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="editTaskReview" type="checkbox" /> 리뷰 필요</label>
+                <div class="task-form-actions">
+                  <button id="saveTaskEditBtn">정의 저장</button>
+                </div>
+              </div>
+              <div class="task-detail-card">
+                <b>선행 작업 편집</b>
+                <div class="task-form-grid">
+                  <select id="editTaskDeps" multiple></select>
+                </div>
+                <div class="task-form-actions">
+                  <button id="saveTaskDepsBtn">의존성 저장</button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </aside>
       </div>
-      <div class="chat" id="chat"></div>
-      <div class="composer">
+      <div class="composer-wrap">
+        <div class="composer">
         <textarea id="text" placeholder="팀에게 질문하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"></textarea>
         <button id="send">전송</button>
+        </div>
       </div>
     </main>
   </div>
@@ -304,6 +692,7 @@
     let allAgents = [];
 
     const chatEl = document.getElementById('chat');
+    const oversightModeEl = document.getElementById('oversightMode');
     const chatInfoEl = document.getElementById('chatInfo');
     const activeAgentsEl = document.getElementById('activeAgents');
     const pickerEl = document.getElementById('agentPicker');
@@ -311,8 +700,21 @@
     const deliverableBoxEl = document.getElementById('deliverableBox');
     const deliverableMetaEl = document.getElementById('deliverableMeta');
     const deliverableBodyEl = document.getElementById('deliverableBody');
+    const exportDocxBtnEl = document.getElementById('exportDocxBtn');
+    const exportPptxBtnEl = document.getElementById('exportPptxBtn');
     const progressBoxEl = document.getElementById('progressBox');
     const progressListEl = document.getElementById('progressList');
+    const planBoxEl = document.getElementById('planBox');
+    const planMetaEl = document.getElementById('planMeta');
+    const planSummaryEl = document.getElementById('planSummary');
+    const approvePlanBtnEl = document.getElementById('approvePlanBtn');
+    const rejectPlanBtnEl = document.getElementById('rejectPlanBtn');
+    const sessionBoxEl = document.getElementById('sessionBox');
+    const sessionMetaEl = document.getElementById('sessionMeta');
+    const sessionListEl = document.getElementById('sessionList');
+    const messageBoxEl = document.getElementById('messageBox');
+    const messageMetaEl = document.getElementById('messageMeta');
+    const messageListEl = document.getElementById('messageList');
     const boardBoxEl = document.getElementById('boardBox');
     const boardColumnsEl = document.getElementById('boardColumns');
     const toggleCreateTaskBtnEl = document.getElementById('toggleCreateTaskBtn');
@@ -384,6 +786,14 @@
       return current?.selected_agents || current?.conversation?.selected_agents || [];
     }
 
+    function currentOversightMode(){
+      return current?.oversight_mode || 'auto';
+    }
+
+    function isAutoTeamRun(){
+      return current?.kind === 'team_run' && currentOversightMode() === 'auto';
+    }
+
     function renderMessages(items){
       const userItems = (items || []).filter(m => m.message_type === 'user');
       chatEl.innerHTML = userItems
@@ -443,6 +853,8 @@
         deliverableBoxEl.style.display = 'none';
         deliverableMetaEl.textContent = '';
         deliverableBodyEl.textContent = '';
+        exportDocxBtnEl.style.display = 'none';
+        exportPptxBtnEl.style.display = 'none';
         return;
       }
       deliverableBoxEl.style.display = '';
@@ -450,12 +862,35 @@
       const kind = item.artifact_type ? `${item.artifact_type} v${item.version || 1}` : 'deliverable';
       deliverableMetaEl.textContent = `${who} · ${kind} · ${item.created_at}`;
       deliverableBodyEl.textContent = item.content;
+      const allowExport = current?.kind === 'team_run';
+      exportDocxBtnEl.style.display = allowExport ? '' : 'none';
+      exportPptxBtnEl.style.display = allowExport ? '' : 'none';
+    }
+
+    async function exportDeliverable(format){
+      if(current?.kind !== 'team_run') return;
+      const btn = format === 'docx' ? exportDocxBtnEl : exportPptxBtnEl;
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '생성 중...';
+      try {
+        const data = await api(`/web/team-runs/${current.id}/exports`, {
+          method:'POST',
+          body: JSON.stringify({format}),
+        });
+        window.location.href = `${apiBase}${data.download_path}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
     }
 
     function progressStatusText(status){
       if(status === 'blocked') return '구성 수정 필요';
       if(status === 'pending') return '다음 단계 대기';
       if(status === 'waiting_user') return '추가 입력 대기';
+      if(status === 'awaiting_review') return '검토 승인 대기';
+      if(status === 'done_with_risks') return '리스크 포함 완료';
       if(status === 'done') return '단계 완료';
       return '진행 중';
     }
@@ -490,6 +925,68 @@
       }).join('');
     }
 
+    function renderPlanGate(run){
+      const isTeamRun = current?.kind === 'team_run';
+      if(!isTeamRun){
+        planBoxEl.style.display = 'none';
+        return;
+      }
+      const planStatus = run?.plan_status || 'pending';
+      const waiting = planStatus === 'awaiting_approval';
+      planBoxEl.style.display = '';
+      planMetaEl.textContent = `${planStatus} · ${run?.oversight_mode || 'auto'}`;
+      planSummaryEl.textContent = waiting
+        ? 'PM이 실행 계획을 제출했습니다. 승인 전에는 worker 실행이 시작되지 않습니다.'
+        : planStatus === 'approved'
+          ? '실행 계획이 승인된 상태입니다.'
+          : planStatus === 'rejected'
+            ? '계획이 반려되어 팀 실행이 중단되었습니다.'
+            : '계획 수립 또는 승인 준비 중입니다.';
+      approvePlanBtnEl.style.display = waiting ? '' : 'none';
+      rejectPlanBtnEl.style.display = waiting ? '' : 'none';
+    }
+
+    function renderSessions(items, tasks){
+      if(current?.kind !== 'team_run'){
+        sessionBoxEl.style.display = 'none';
+        sessionListEl.innerHTML = '';
+        return;
+      }
+      const taskMap = Object.fromEntries((tasks || []).map(task => [task.id, task]));
+      if(!items?.length){
+        sessionBoxEl.style.display = 'none';
+        sessionListEl.innerHTML = '';
+        return;
+      }
+      sessionBoxEl.style.display = '';
+      sessionMetaEl.textContent = `${items.length} sessions`;
+      sessionListEl.innerHTML = items.map(item => {
+        const task = item.current_task_id ? taskMap[item.current_task_id] : null;
+        const line = task ? `${task.title} · ${task.status}` : '대기 중';
+        return `<div class="session-item"><div class="session-title">${esc(handleLabel(item.handle))}</div><div class="session-meta">${esc(item.role)} · ${esc(item.status)}${item.last_heartbeat_at ? ` · ${esc(item.last_heartbeat_at)}` : ''}</div><div class="session-meta">${esc(line)}</div></div>`;
+      }).join('');
+    }
+
+    function renderInbox(items){
+      if(current?.kind !== 'team_run'){
+        messageBoxEl.style.display = 'none';
+        messageListEl.innerHTML = '';
+        return;
+      }
+      if(!items?.length){
+        messageBoxEl.style.display = 'none';
+        messageListEl.innerHTML = '';
+        return;
+      }
+      messageBoxEl.style.display = '';
+      messageMetaEl.textContent = `${items.length} messages`;
+      messageListEl.innerHTML = items.slice(-8).reverse().map(item => {
+        const from = item.from_handle ? handleLabel(item.from_handle) : 'system';
+        const to = item.to_handle ? handleLabel(item.to_handle) : 'team';
+        return `<div class="message-item"><div class="message-title">${esc(item.subject || item.message_type || 'message')}</div><div class="message-meta">${esc(from)} -> ${esc(to)} · ${esc(item.created_at)}</div><div class="message-body">${esc(item.content || '')}</div></div>`;
+      }).join('');
+    }
+
     function reviewStateLabel(task){
       if(task.review_state === 'approved') return '승인됨';
       if(task.review_state === 'rejected') return '반려됨';
@@ -503,6 +1000,7 @@
       const review = reviewStateLabel(task);
       if(review) badges.push(`<span class="task-badge review">${esc(review)}</span>`);
       if(task.latest_artifact_type) badges.push(`<span class="task-badge artifact">${esc(task.latest_artifact_type)}</span>`);
+      if(task.claim_status === 'claimed' && task.claimed_by_handle) badges.push(`<span class="task-badge artifact">${esc(task.claimed_by_handle)} claim</span>`);
       if(task.ready) badges.push(`<span class="task-badge ready">ready</span>`);
       return badges.join('');
     }
@@ -519,8 +1017,9 @@
 
     function renderTaskCreateForm(){
       const isTeamRun = current?.kind === 'team_run';
-      taskCreateBoxEl.style.display = isTeamRun && isCreateTaskOpen ? '' : 'none';
-      toggleCreateTaskBtnEl.style.display = isTeamRun ? '' : 'none';
+      const autoMode = isAutoTeamRun();
+      taskCreateBoxEl.style.display = isTeamRun && !autoMode && isCreateTaskOpen ? '' : 'none';
+      toggleCreateTaskBtnEl.style.display = isTeamRun && !autoMode ? '' : 'none';
       if(!isTeamRun) return;
       const owners = Array.from(new Set((current.selected_agents || []).filter(Boolean)));
       createTaskOwnerEl.innerHTML = owners.map(handle => {
@@ -564,6 +1063,10 @@
 
     function renderTaskDetail(payload){
       currentTaskDetail = payload || null;
+      if(isAutoTeamRun()){
+        taskDetailBoxEl.style.display = 'none';
+        return;
+      }
       if(!payload?.task){
         taskDetailBoxEl.style.display = 'none';
         taskDetailTitleEl.textContent = '작업 상세';
@@ -596,6 +1099,7 @@
         task.status,
         task.artifact_goal || '-',
       ];
+      if(task.claimed_by_handle) meta.push(`claimed by ${task.claimed_by_handle}`);
       const review = reviewStateLabel(task);
       if(review) meta.push(review);
       taskDetailBoxEl.style.display = '';
@@ -659,14 +1163,21 @@
 
     async function applyTeamSnapshot(data){
       setCurrentTeamRun(data);
+      oversightModeEl.value = currentOversightMode();
       renderMessages(data.items || []);
+      renderPlanGate(data.run || current);
       renderTeamActivity(data.activity || []);
+      renderSessions(data.sessions || [], data.tasks || []);
+      renderInbox(data.messages || []);
       renderBoard(data.tasks || []);
       await syncTaskDetail(data.tasks || []);
       renderDeliverable(data.deliverable || null);
       renderActiveAgents(current);
       renderPicker(current);
       chatInfoEl.textContent = workspaceSummary(current);
+      document.getElementById('text').placeholder = isAutoTeamRun()
+        ? '요청을 입력하면 팀이 자동으로 결과물까지 만듭니다...'
+        : '팀에게 질문하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)';
     }
 
     async function updateSelectedTask(body){
@@ -745,9 +1256,10 @@
 
     async function createWorkspace(){
       const mode = document.getElementById('mode').value;
+      const oversight_mode = oversightModeEl.value;
       const selected_agents = ['planner','writer','critic','manager','coder'];
       if(mode === 'team-autonomous'){
-        const data = await api('/web/team-runs', {method:'POST', body: JSON.stringify({title:'Web Team Run', requested_by:'web_user', selected_agents})});
+        const data = await api('/web/team-runs', {method:'POST', body: JSON.stringify({title:'Web Team Run', requested_by:'web_user', selected_agents, oversight_mode})});
         await applyTeamSnapshot(data);
       } else {
         const data = await api('/web/chats', {method:'POST', body: JSON.stringify({title:'Web Team Chat', mode, selected_agents})});
@@ -757,6 +1269,7 @@
         renderBoard([]);
         renderTaskDetail(null);
         renderDeliverable(null);
+        oversightModeEl.value = 'auto';
       }
       chatInfoEl.textContent = workspaceSummary(current);
       renderActiveAgents(current);
@@ -773,7 +1286,10 @@
         const data = await api(`/web/chats/${current.id}/workspace`);
         setCurrentChat(data.conversation || current);
         renderMessages(data.items || []);
+        renderPlanGate(null);
         renderChatProgress(data.progress_steps || []);
+        renderSessions([], []);
+        renderInbox([]);
         renderBoard([]);
         renderTaskDetail(null);
         renderDeliverable(data.deliverable || null);
@@ -844,7 +1360,9 @@
 
     function workspaceSummary(entity){
       if(entity?.kind === 'team_run'){
-        return `team_run: ${entity?.id || '-'} · status: ${entity?.status || 'idle'}`;
+        const preset = entity?.workflow_preset ? ` · preset: ${entity.workflow_preset}` : '';
+        const plan = entity?.plan_status ? ` · plan: ${entity.plan_status}` : '';
+        return `team_run: ${entity?.id || '-'} · mode: ${entity?.oversight_mode || 'auto'}${preset}${plan} · status: ${entity?.status || 'idle'}`;
       }
       const next = entity?.expected_next_handle ? ` · next: ${entity.expected_next_handle}` : '';
       const status = entity?.status ? ` · status: ${entity.status}` : '';
@@ -855,6 +1373,23 @@
     document.getElementById('refresh').addEventListener('click', () => refresh().catch(e => alert(e.message)));
     document.getElementById('saveAgents').addEventListener('click', () => saveAgents().catch(e => alert(e.message)));
     document.getElementById('send').addEventListener('click', () => send().catch(e => alert(e.message)));
+    approvePlanBtnEl.addEventListener('click', async () => {
+      if(current?.kind !== 'team_run') return;
+      const data = await api(`/web/team-runs/${current.id}/plan/approve`, {
+        method:'POST',
+        body: JSON.stringify({actor_handle: 'manager'}),
+      });
+      await applyTeamSnapshot(data);
+    });
+    rejectPlanBtnEl.addEventListener('click', async () => {
+      if(current?.kind !== 'team_run') return;
+      const reason = window.prompt('반려 사유를 입력하세요.', '범위를 좁히고 작업 구조를 다시 조정해 주세요.') || '';
+      const data = await api(`/web/team-runs/${current.id}/plan/reject`, {
+        method:'POST',
+        body: JSON.stringify({actor_handle: 'manager', reason}),
+      });
+      await applyTeamSnapshot(data);
+    });
     toggleCreateTaskBtnEl.addEventListener('click', () => {
       isCreateTaskOpen = !isCreateTaskOpen;
       renderTaskCreateForm();
@@ -911,6 +1446,8 @@
       if(!text) return;
       await navigator.clipboard.writeText(text);
     });
+    exportDocxBtnEl.addEventListener('click', () => exportDeliverable('docx').catch(err => alert(err.message)));
+    exportPptxBtnEl.addEventListener('click', () => exportDeliverable('pptx').catch(err => alert(err.message)));
     document.getElementById('text').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();

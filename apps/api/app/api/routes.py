@@ -3,6 +3,7 @@ import threading
 import hashlib
 import hmac
 import json
+import re
 import shutil
 import uuid
 from uuid import UUID
@@ -45,6 +46,7 @@ from app.schemas.request_response import (
 from app.services.document_parser import extract_text
 from app.services.job_dispatcher import dispatch_job
 from app.services.llm_router import get_llm_provider
+from app.services.file_generators import generate_pptx, generate_report_docx
 from app.services.planner_agent import PlannerAgent
 from app.adapters.telegram.handlers import process_update
 from app.adapters.telegram.dispatcher import DispatchResult
@@ -56,13 +58,50 @@ from app.conversations.serializer import (
     serialize_message,
     serialize_team_activity,
     serialize_team_dependency,
+    serialize_team_message,
     serialize_team_run,
+    serialize_team_session,
     serialize_team_task,
 )
 from app.orchestrator.engine import orchestrator
 from app.team_runtime.service import TeamRunService
 
 router = APIRouter()
+
+AUTO_REVIEW_MAX_ROUNDS = 2
+TEAM_EXPORT_PROJECT_NAME = "Agent Team Exports"
+AUTO_REVIEW_REJECT_KEYWORDS = (
+    "반려",
+    "재작성",
+    "재작업",
+    "수정",
+    "보강",
+    "누락",
+    "부족",
+    "오류",
+    "불명확",
+    "출처",
+)
+TEAM_ARTIFACT_STATUS_PHRASES = (
+    "작성 중",
+    "대기 중",
+    "준비 중",
+    "제출 필요",
+    "초안 대기",
+    "검토 준비 완료",
+    "다음 실행",
+    "검토 예정",
+)
+PRESENTATION_REQUEST_KEYWORDS = (
+    "발표",
+    "발표자료",
+    "발표 자료",
+    "ppt",
+    "pptx",
+    "슬라이드",
+    "presentation",
+    "deck",
+)
 
 
 @router.get("/", include_in_schema=False)
@@ -73,6 +112,76 @@ def root():
 
 def _secret_hash(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _normalize_oversight_mode(value: object | None) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized not in {"manual", "auto"}:
+        raise HTTPException(status_code=400, detail="oversight_mode must be manual or auto")
+    return normalized
+
+
+def _infer_task_kind(artifact_goal: str) -> str:
+    goal = str(artifact_goal or "").strip().lower()
+    if goal == "review_notes":
+        return "review"
+    if goal == "final":
+        return "final"
+    if goal in {"brief", "decision"}:
+        return "plan"
+    return "draft"
+
+
+def _slugify_filename(value: str, default: str = "docflow") -> str:
+    slug = re.sub(r"[^a-zA-Z0-9가-힣_-]+", "-", (value or "").strip()).strip("-_.")
+    return slug[:80] or default
+
+
+def _ensure_team_export_project(db: Session) -> ProjectModel:
+    project = (
+        db.execute(
+            select(ProjectModel).where(ProjectModel.name == TEAM_EXPORT_PROJECT_NAME).limit(1)
+        ).scalar_one_or_none()
+    )
+    if project:
+        return project
+    project = ProjectModel(
+        name=TEAM_EXPORT_PROJECT_NAME,
+        description="Internal project for team run exports",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+def _persist_team_export_file(
+    db: Session,
+    *,
+    run: conversation_models.TeamRunModel,
+    filename: str,
+    content: bytes,
+    mime_type: str,
+    extracted_text: str = "",
+) -> FileModel:
+    project = _ensure_team_export_project(db)
+    output_dir = Path(settings.upload_dir) / str(project.id) / "generated" / "team_runs" / str(run.id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = output_dir / filename
+    stored_path.write_bytes(content)
+    file_row = FileModel(
+        project_id=project.id,
+        job_id=None,
+        original_name=filename,
+        stored_path=str(stored_path),
+        mime_type=mime_type,
+        size=stored_path.stat().st_size,
+        source_type="generated",
+        extracted_text=extracted_text,
+        created_at=now_utc(),
+    )
+    db.add(file_row)
+    db.flush()
+    return file_row
 
 
 def _has_active_ops_keys(db: Session) -> bool:
@@ -859,6 +968,7 @@ def create_web_team_run(
     title = str(payload.get("title") or "Web Team Run").strip()[:120]
     requested_by = str(payload.get("requested_by") or "web_user").strip() or "web_user"
     mode = "team-autonomous"
+    oversight_mode = _normalize_oversight_mode(payload.get("oversight_mode"))
     valid = {a["handle"] for a in orchestrator.list_agents_info()}
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
@@ -887,10 +997,12 @@ def create_web_team_run(
         conversation_id=conv.id,
         title=title or "Web Team Run",
         mode=mode,
+        oversight_mode=oversight_mode,
         requested_by=requested_by,
         selected_agents=selected,
         status="idle",
     )
+    _ensure_team_run_sessions(team_svc, run)
     team_svc.create_activity(
         team_run_id=run.id,
         event_type="run_created",
@@ -938,6 +1050,164 @@ def get_web_team_run_activity(
     return {"items": [serialize_team_activity(event) for event in svc.list_activity(team_run_id, limit=120)]}
 
 
+@router.get("/web/team-runs/{team_run_id}/sessions", status_code=200)
+def get_web_team_run_sessions(
+    team_run_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = TeamRunService(db)
+    run = svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    _ensure_team_run_sessions(svc, run)
+    db.commit()
+    return {"items": [serialize_team_session(item) for item in svc.list_sessions(team_run_id)]}
+
+
+@router.post("/web/team-runs/{team_run_id}/sessions/spawn", status_code=201)
+def spawn_web_team_run_session(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    svc = TeamRunService(db)
+    run = svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    handle = str(payload.get("handle") or "").strip().lower()
+    if not handle:
+        raise HTTPException(status_code=400, detail="handle is required")
+    if run.selected_agents and handle not in set(run.selected_agents):
+        raise HTTPException(status_code=400, detail="handle must be in selected_agents")
+    role = str(payload.get("role") or "worker").strip().lower() or "worker"
+    display_name = str(payload.get("display_name") or handle).strip() or handle
+    session = svc.create_session(
+        team_run_id=run.id,
+        handle=handle,
+        role=role,
+        display_name=display_name,
+    )
+    svc.create_activity(
+        team_run_id=run.id,
+        event_type="session_spawned",
+        actor_handle="planner",
+        target_handle=handle,
+        summary=f"planner가 {handle} 세션을 추가로 생성했습니다.",
+        payload={"session_id": str(session.id)},
+    )
+    db.commit()
+    return {"item": serialize_team_session(session)}
+
+
+@router.get("/web/team-runs/{team_run_id}/messages", status_code=200)
+def get_web_team_run_messages(
+    team_run_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = TeamRunService(db)
+    run = svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    return {"items": [serialize_team_message(item) for item in svc.list_inbox_messages(team_run_id, limit=200)]}
+
+
+@router.post("/web/team-runs/{team_run_id}/messages", status_code=201)
+def create_web_team_run_message(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    svc = TeamRunService(db)
+    run = svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    from_session_id = _coerce_optional_uuid(payload.get("from_session_id"))
+    to_session_id = _coerce_optional_uuid(payload.get("to_session_id"))
+    related_task_id = _coerce_optional_uuid(payload.get("related_task_id"))
+    for session_id in (from_session_id, to_session_id):
+        if not session_id:
+            continue
+        session = svc.get_session(session_id)
+        if not session or session.team_run_id != run.id:
+            raise HTTPException(status_code=400, detail="session must belong to the same run")
+    item = svc.create_inbox_message(
+        team_run_id=run.id,
+        from_session_id=from_session_id,
+        to_session_id=to_session_id,
+        related_task_id=related_task_id,
+        message_type=str(payload.get("message_type") or "direct").strip().lower() or "direct",
+        subject=str(payload.get("subject") or "").strip(),
+        content=content,
+    )
+    db.commit()
+    return {"item": serialize_team_message(item)}
+
+
+@router.post("/web/tasks/{task_id}/claim", status_code=200)
+def claim_web_team_task(
+    task_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    task = team_svc.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    session_id = _coerce_optional_uuid(payload.get("session_id"))
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    session = team_svc.get_session(session_id)
+    if not session or session.team_run_id != task.team_run_id:
+        raise HTTPException(status_code=400, detail="session_id must belong to the same run")
+    if task.claim_status != "open" or task.status != "todo":
+        raise HTTPException(status_code=400, detail="task is not claimable")
+    team_svc.claim_task(task_id=task.id, session_id=session.id)
+    team_svc.create_activity(
+        team_run_id=task.team_run_id,
+        task_id=task.id,
+        event_type="task_claimed",
+        actor_handle=session.handle,
+        summary=f"{session.handle} 세션이 '{task.title}' 작업을 선점했습니다.",
+        payload={"session_id": str(session.id)},
+    )
+    db.commit()
+    run = team_svc.get_run(task.team_run_id)
+    if not run:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, run)
+
+
+@router.post("/web/tasks/{task_id}/release", status_code=200)
+def release_web_team_task_claim(
+    task_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    task = team_svc.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.claim_status != "claimed":
+        raise HTTPException(status_code=400, detail="task is not claimed")
+    claimed_session = team_svc.get_session(task.claimed_by_session_id) if task.claimed_by_session_id else None
+    team_svc.release_task_claim(task.id)
+    team_svc.create_activity(
+        team_run_id=task.team_run_id,
+        task_id=task.id,
+        event_type="task_released",
+        actor_handle=claimed_session.handle if claimed_session else None,
+        summary=f"'{task.title}' 작업 선점이 해제되었습니다.",
+    )
+    db.commit()
+    run = team_svc.get_run(task.team_run_id)
+    if not run:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, run)
+
+
 @router.post("/web/team-runs/{team_run_id}/tasks", status_code=201)
 async def create_web_team_task(
     team_run_id: UUID,
@@ -979,6 +1249,7 @@ async def create_web_team_task(
         priority=priority,
         parent_task_id=parent_task_id,
         review_required=review_required,
+        task_kind=_infer_task_kind(artifact_goal),
     )
     _validate_dependency_ids(team_svc, run.id, task.id, dependency_ids)
     if _creates_dependency_cycle(team_svc, run.id, task.id, dependency_ids):
@@ -997,13 +1268,23 @@ async def create_web_team_task(
         ),
         payload={"depends_on_task_ids": [str(item) for item in dependency_ids]},
     )
+    _create_team_inbox_message(
+        team_svc,
+        run,
+        from_handle=actor_handle,
+        to_handle=owner_handle,
+        related_task_id=task.id,
+        message_type="task_assignment",
+        subject="새 작업 배정",
+        content=f"'{title}' 작업이 배정되었습니다. 목표 산출물은 {artifact_goal}입니다.",
+    )
 
-    if _task_is_ready(team_svc, run.id, task.id):
+    if _task_is_ready(team_svc, run.id, task.id, db):
         team_svc.update_run(run.id, status="active")
         db.commit()
         await _run_team_scheduler(db, run.id)
     else:
-        _refresh_team_run_status(team_svc, run.id)
+        _refresh_team_run_status(db, team_svc, run.id)
         db.commit()
 
     refreshed_run = team_svc.get_run(run.id)
@@ -1079,6 +1360,7 @@ async def send_web_team_run_request(
     conv = db.get(conversation_models.ConversationModel, run.conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Linked conversation not found")
+    _ensure_team_run_sessions(team_svc, run)
 
     selected = _normalize_web_selected_agents(
         selected=list(run.selected_agents or conv.selected_agents or []),
@@ -1114,6 +1396,7 @@ async def send_web_team_run_request(
             created_by_handle=sender_name,
             review_required=False,
             priority=95,
+            task_kind="plan",
         )
         team_svc.create_activity(
             team_run_id=run.id,
@@ -1123,13 +1406,23 @@ async def send_web_team_run_request(
             target_handle="planner",
             summary="사용자가 후속 요청을 남겼고 PM이 반영 작업을 추가했습니다.",
         )
-        team_svc.update_run(run.id, status="active")
+        _create_team_inbox_message(
+            team_svc,
+            run,
+            from_handle=None,
+            to_handle="planner",
+            related_task_id=followup.id,
+            message_type="task_assignment",
+            subject="후속 요청 반영",
+            content=f"사용자 후속 요청: {text}",
+        )
+        team_svc.update_run(run.id, status="active", plan_status="approved")
         db.commit()
         await _run_team_scheduler(db, run.id)
         db.refresh(run)
         return _build_team_board_snapshot(db, run)
 
-    team_svc.update_run(run.id, request_text=text, status="planning")
+    team_svc.update_run(run.id, request_text=text, status="planning", plan_status="pending")
     brief, task_defs = await _decompose_team_request(text, selected)
 
     planner_task = team_svc.create_task(
@@ -1141,7 +1434,9 @@ async def send_web_team_run_request(
         created_by_handle="planner",
         review_required=False,
         status="done",
+        claim_status="done",
         priority=10,
+        task_kind="plan",
     )
     brief_artifact = conv_svc.create_or_replace_artifact(
         conversation_id=conv.id,
@@ -1172,7 +1467,9 @@ async def send_web_team_run_request(
             created_by_handle="planner",
             review_required=bool(task_def.get("review_required", False)),
             status=task_def.get("status", "todo"),
+            claim_status="open" if task_def.get("status", "todo") == "todo" else "done",
             priority=int(task_def.get("priority", 50)),
+            task_kind=_infer_task_kind(task_def["artifact_goal"]),
         )
         created_tasks[task.title] = task
         team_svc.create_activity(
@@ -1182,6 +1479,16 @@ async def send_web_team_run_request(
             actor_handle="planner",
             target_handle=task.owner_handle,
             summary=f"PM이 {task.owner_handle}에게 '{task.title}' 작업을 배정했습니다.",
+        )
+        _create_team_inbox_message(
+            team_svc,
+            run,
+            from_handle="planner",
+            to_handle=task.owner_handle,
+            related_task_id=task.id,
+            message_type="task_assignment",
+            subject=task.title,
+            content=f"새 작업이 배정되었습니다.\n- 설명: {task.description}\n- 목표 산출물: {task.artifact_goal}",
         )
 
     for task_def in task_defs:
@@ -1195,11 +1502,117 @@ async def send_web_team_run_request(
             if dep_task:
                 team_svc.add_dependency(team_task_id=current_task.id, depends_on_task_id=dep_task.id)
 
-    team_svc.update_run(run.id, status="active")
+    if run.oversight_mode == "manual":
+        team_svc.update_run(run.id, status="awaiting_plan_approval", plan_status="awaiting_approval")
+        team_svc.create_activity(
+            team_run_id=run.id,
+            event_type="plan_submitted",
+            actor_handle="planner",
+            summary="PM이 실행 계획을 제출했고 승인 대기 상태로 전환했습니다.",
+            payload={"artifact_id": str(brief_artifact.id)},
+        )
+        _create_team_inbox_message(
+            team_svc,
+            run,
+            from_handle="planner",
+            to_handle="manager",
+            message_type="plan_approval",
+            subject="실행 계획 승인 요청",
+            content="PM이 실행 계획을 제출했습니다. 승인 또는 반려를 결정해 주세요.",
+        )
+        db.commit()
+        db.refresh(run)
+        return _build_team_board_snapshot(db, run)
+
+    team_svc.update_run(run.id, status="active", plan_status="approved")
+    team_svc.create_activity(
+        team_run_id=run.id,
+        event_type="plan_approved",
+        actor_handle="manager",
+        summary="자동 모드에서 실행 계획이 승인되어 팀 실행을 시작합니다.",
+        payload={"artifact_id": str(brief_artifact.id)},
+    )
     db.commit()
     await _run_team_scheduler(db, run.id)
     db.refresh(run)
     return _build_team_board_snapshot(db, run)
+
+
+@router.post("/web/team-runs/{team_run_id}/plan/approve", status_code=200)
+async def approve_web_team_run_plan(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    run = team_svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    if run.plan_status not in {"awaiting_approval", "pending"}:
+        raise HTTPException(status_code=400, detail="plan is not awaiting approval")
+    actor_handle = str(payload.get("actor_handle") or "manager").strip().lower() or "manager"
+    team_svc.update_run(run.id, plan_status="approved", status="active")
+    team_svc.create_activity(
+        team_run_id=run.id,
+        event_type="plan_approved",
+        actor_handle=actor_handle,
+        summary=f"{actor_handle}가 실행 계획을 승인했습니다.",
+    )
+    _create_team_inbox_message(
+        team_svc,
+        run,
+        from_handle=actor_handle,
+        to_handle="planner",
+        message_type="plan_feedback",
+        subject="실행 계획 승인",
+        content="실행 계획이 승인되었습니다. 후속 작업을 진행하세요.",
+    )
+    db.commit()
+    await _run_team_scheduler(db, run.id)
+    refreshed = team_svc.get_run(run.id)
+    if not refreshed:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, refreshed)
+
+
+@router.post("/web/team-runs/{team_run_id}/plan/reject", status_code=200)
+def reject_web_team_run_plan(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    run = team_svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    if run.plan_status not in {"awaiting_approval", "pending"}:
+        raise HTTPException(status_code=400, detail="plan is not awaiting approval")
+    actor_handle = str(payload.get("actor_handle") or "manager").strip().lower() or "manager"
+    reason = str(payload.get("reason") or "").strip()
+    planner_session = team_svc.find_session_by_handle(run.id, "planner")
+    team_svc.update_run(run.id, plan_status="rejected", status="blocked")
+    team_svc.create_activity(
+        team_run_id=run.id,
+        event_type="plan_rejected",
+        actor_handle=actor_handle,
+        target_handle="planner",
+        summary=f"{actor_handle}가 실행 계획을 반려했습니다.",
+        payload={"reason": reason} if reason else None,
+    )
+    if planner_session:
+        team_svc.create_inbox_message(
+            team_run_id=run.id,
+            from_session_id=None,
+            to_session_id=planner_session.id,
+            message_type="plan_feedback",
+            subject="실행 계획 반려",
+            content=reason or "계획을 다시 조정해 주세요.",
+        )
+    db.commit()
+    refreshed = team_svc.get_run(run.id)
+    if not refreshed:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, refreshed)
 
 
 @router.patch("/web/tasks/{task_id}", status_code=200)
@@ -1261,6 +1674,10 @@ async def update_web_team_task(
     if not updated:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    if owner_changed and updated.claim_status == "claimed":
+        team_svc.release_task_claim(updated.id, reset_status="open")
+        updated = team_svc.update_task(updated.id, status="todo") or updated
+
     if owner_changed:
         team_svc.create_activity(
             team_run_id=updated.team_run_id,
@@ -1270,6 +1687,26 @@ async def update_web_team_task(
             target_handle=updated.owner_handle,
             summary=f"{actor_handle}가 '{updated.title}' 작업 담당자를 {previous_owner}에서 {updated.owner_handle}로 변경했습니다.",
         )
+        _create_team_inbox_message(
+            team_svc,
+            run,
+            from_handle=actor_handle,
+            to_handle=updated.owner_handle,
+            related_task_id=updated.id,
+            message_type="task_assignment",
+            subject="작업 재배정",
+            content=f"'{updated.title}' 작업이 {updated.owner_handle}에게 재배정되었습니다.",
+        )
+
+    if "status" in fields and updated.claim_status == "claimed":
+        reset_claim = {
+            "todo": "open",
+            "blocked": "blocked",
+            "done": "done",
+            "canceled": "open",
+        }.get(updated.status)
+        if reset_claim:
+            team_svc.release_task_claim(updated.id, reset_status=reset_claim)
 
     if action in {"rerun", "unblock"}:
         reopened = _reset_team_task_branch(
@@ -1278,6 +1715,8 @@ async def update_web_team_task(
             task_id=updated.id,
             include_descendants=action == "rerun",
         )
+        if action == "rerun":
+            _supersede_reopened_task_artifacts(db, run=run, tasks=reopened)
         summary = (
             f"{actor_handle}가 '{updated.title}' 작업을 다시 실행하도록 요청했습니다."
             if action == "rerun"
@@ -1315,7 +1754,21 @@ async def update_web_team_task(
                 target_handle=updated.owner_handle,
                 summary=f"{actor_handle}가 '{updated.title}' 검토를 승인했습니다.",
             )
+            final_task = _find_final_task(team_svc, run.id)
+            if final_task:
+                _create_team_inbox_message(
+                    team_svc,
+                    run,
+                    from_handle=actor_handle,
+                    to_handle=final_task.owner_handle,
+                    related_task_id=final_task.id,
+                    message_type="review_feedback",
+                    subject="검토 승인",
+                    content=f"'{updated.title}' 검토가 승인되었습니다. 최종 산출물을 정리하세요.",
+                )
+            team_svc.update_run(updated.team_run_id, status="active")
             db.commit()
+            await _run_team_scheduler(db, updated.team_run_id)
             refreshed_run = team_svc.get_run(updated.team_run_id)
             if not refreshed_run:
                 raise HTTPException(status_code=500, detail="Failed to refresh team run")
@@ -1326,6 +1779,7 @@ async def update_web_team_task(
             run_id=run.id,
             review_task_id=updated.id,
         )
+        _supersede_reopened_task_artifacts(db, run=run, tasks=reopened)
         team_svc.create_activity(
             team_run_id=updated.team_run_id,
             task_id=updated.id,
@@ -1338,6 +1792,19 @@ async def update_web_team_task(
             ),
             payload={"reopened_task_ids": [str(item.id) for item in reopened]},
         )
+        for reopened_task in reopened:
+            if reopened_task.id == updated.id:
+                continue
+            _create_team_inbox_message(
+                team_svc,
+                run,
+                from_handle=actor_handle,
+                to_handle=reopened_task.owner_handle,
+                related_task_id=reopened_task.id,
+                message_type="review_feedback",
+                subject="검토 반려로 재작업 필요",
+                content=f"'{updated.title}' 검토가 반려되었습니다. '{reopened_task.title}' 작업을 보강해 주세요.",
+            )
         team_svc.update_run(updated.team_run_id, status="active")
         db.commit()
         await _run_team_scheduler(db, updated.team_run_id)
@@ -1353,6 +1820,7 @@ async def update_web_team_task(
             task_id=updated.id,
             include_descendants=True,
         )
+        _supersede_reopened_task_artifacts(db, run=run, tasks=reopened)
         team_svc.create_activity(
             team_run_id=updated.team_run_id,
             task_id=updated.id,
@@ -1370,12 +1838,12 @@ async def update_web_team_task(
             summary=f"{actor_handle}가 '{updated.title}' 작업을 다시 열고 후속 작업 {max(len(reopened) - 1, 0)}개를 함께 재개했습니다.",
             payload={"reopened_task_ids": [str(item.id) for item in reopened]},
         )
-        if _task_is_ready(team_svc, run.id, updated.id):
+        if _task_is_ready(team_svc, run.id, updated.id, db):
             team_svc.update_run(updated.team_run_id, status="active")
             db.commit()
             await _run_team_scheduler(db, updated.team_run_id)
         else:
-            _refresh_team_run_status(team_svc, updated.team_run_id)
+            _refresh_team_run_status(db, team_svc, updated.team_run_id)
             db.commit()
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
@@ -1404,7 +1872,7 @@ async def update_web_team_task(
         summary=summary,
     )
 
-    _refresh_team_run_status(team_svc, updated.team_run_id)
+    _refresh_team_run_status(db, team_svc, updated.team_run_id)
 
     db.commit()
     refreshed_run = team_svc.get_run(updated.team_run_id)
@@ -1453,6 +1921,7 @@ async def update_web_team_task_dependencies(
             task_id=task.id,
             include_descendants=True,
         )
+        _supersede_reopened_task_artifacts(db, run=run, tasks=reopened)
         team_svc.create_activity(
             team_run_id=run.id,
             task_id=task.id,
@@ -1463,12 +1932,12 @@ async def update_web_team_task_dependencies(
             payload={"reopened_task_ids": [str(item.id) for item in reopened]},
         )
 
-    if _task_is_ready(team_svc, run.id, task.id):
+    if _task_is_ready(team_svc, run.id, task.id, db):
         team_svc.update_run(run.id, status="active")
         db.commit()
         await _run_team_scheduler(db, run.id)
     else:
-        _refresh_team_run_status(team_svc, run.id)
+        _refresh_team_run_status(db, team_svc, run.id)
         db.commit()
 
     refreshed_run = team_svc.get_run(run.id)
@@ -1477,19 +1946,104 @@ async def update_web_team_task_dependencies(
     return _build_team_board_snapshot(db, refreshed_run)
 
 
-def _extract_web_deliverable(db: Session, conversation_id: UUID) -> dict | None:
+def _artifact_payload(artifact: conversation_models.ConversationArtifactModel) -> dict:
+    return {
+        "artifact_type": artifact.artifact_type,
+        "version": artifact.version,
+        "status": artifact.status,
+        "created_by_handle": artifact.created_by_handle,
+        "created_at": artifact.created_at.isoformat(),
+        "content": artifact.content,
+    }
+
+
+def _latest_active_task_artifact(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    task_ids: list[uuid.UUID],
+    artifact_type: str,
+) -> conversation_models.ConversationArtifactModel | None:
+    if not task_ids:
+        return None
+    return (
+        db.query(conversation_models.ConversationArtifactModel)
+        .filter(
+            conversation_models.ConversationArtifactModel.conversation_id == conversation_id,
+            conversation_models.ConversationArtifactModel.task_id.in_(task_ids),
+            conversation_models.ConversationArtifactModel.artifact_type == artifact_type,
+            conversation_models.ConversationArtifactModel.status.in_(("active", "final")),
+        )
+        .order_by(
+            conversation_models.ConversationArtifactModel.version.desc(),
+            conversation_models.ConversationArtifactModel.created_at.desc(),
+        )
+        .first()
+    )
+
+
+def _extract_web_deliverable(
+    db: Session,
+    conversation_id: UUID,
+    run: conversation_models.TeamRunModel | None = None,
+) -> dict | None:
     svc = ConversationService(db)
-    for artifact_type in ("final", "decision", "draft"):
+    if run:
+        team_svc = TeamRunService(db)
+        tasks = team_svc.list_tasks(run.id)
+        final_task_ids = [task.id for task in tasks if task.artifact_goal == "final" and task.status == "done"]
+        if final_task_ids:
+            artifact = _latest_active_task_artifact(
+                db,
+                conversation_id=conversation_id,
+                task_ids=final_task_ids,
+                artifact_type="final",
+            )
+            if artifact and artifact.content.strip():
+                return _artifact_payload(artifact)
+        decision_task_ids = [task.id for task in tasks if task.artifact_goal == "decision" and task.status == "done"]
+        if decision_task_ids:
+            artifact = _latest_active_task_artifact(
+                db,
+                conversation_id=conversation_id,
+                task_ids=decision_task_ids,
+                artifact_type="decision",
+            )
+            if artifact and artifact.content.strip():
+                return _artifact_payload(artifact)
+        brief_task_ids = [task.id for task in tasks if task.artifact_goal == "brief" and task.status == "done"]
+        if brief_task_ids and run.plan_status != "approved":
+            artifact = _latest_active_task_artifact(
+                db,
+                conversation_id=conversation_id,
+                task_ids=brief_task_ids,
+                artifact_type="brief",
+            )
+            if artifact and artifact.content.strip():
+                return _artifact_payload(artifact)
+        for owner_group in (("writer",), ("coder",), ("planner", "manager", "critic", "reviewer")):
+            draft_task_ids = [
+                task.id
+                for task in tasks
+                if task.artifact_goal == "draft"
+                and task.status == "done"
+                and task.owner_handle in owner_group
+            ]
+            if not draft_task_ids:
+                continue
+            artifact = _latest_active_task_artifact(
+                db,
+                conversation_id=conversation_id,
+                task_ids=draft_task_ids,
+                artifact_type="draft",
+            )
+            if artifact and artifact.content.strip():
+                return _artifact_payload(artifact)
+
+    for artifact_type in ("final", "decision", "brief", "draft"):
         artifact = svc.get_latest_artifact(conversation_id, artifact_type)
         if artifact and artifact.content.strip():
-            return {
-                "artifact_type": artifact.artifact_type,
-                "version": artifact.version,
-                "status": artifact.status,
-                "created_by_handle": artifact.created_by_handle,
-                "created_at": artifact.created_at.isoformat(),
-                "content": artifact.content,
-            }
+            return _artifact_payload(artifact)
 
     rows = (
         db.query(conversation_models.MessageModel)
@@ -1535,6 +2089,304 @@ def _extract_web_deliverable(db: Session, conversation_id: UUID) -> dict | None:
     return None
 
 
+def _extract_sources_from_text(body_text: str) -> list[str]:
+    sources: list[str] = []
+    seen: set[str] = set()
+    for raw in body_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if line.startswith("- "):
+            candidate = line[2:].strip()
+        elif line.startswith("* "):
+            candidate = line[2:].strip()
+        else:
+            candidate = line
+        if "http://" in lowered or "https://" in lowered or lowered.startswith("출처") or lowered.startswith("sources"):
+            key = candidate.lower()
+            if key not in seen:
+                seen.add(key)
+                sources.append(candidate)
+    return sources[:10]
+
+
+def _build_ppt_slides_from_text(title: str, body_text: str) -> list[dict]:
+    sections: list[dict] = []
+    current_title = "핵심 내용"
+    current_bullets: list[str] = []
+    skip_section = False
+    meta_headings = (
+        "자동 검토 종료 상태",
+        "현재 판단",
+        "남은 리스크",
+        "최신 초안",
+        "최신 검토 메모",
+        "검토 상태",
+    )
+
+    def flush() -> None:
+        nonlocal current_title, current_bullets
+        bullets = [line.strip() for line in current_bullets if line.strip()]
+        if bullets:
+            sections.append({"title": current_title[:80], "bullets": bullets[:6]})
+        current_bullets = []
+
+    for raw in body_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("# "):
+            continue
+        if line.startswith("## "):
+            flush()
+            heading = line[3:].strip() or "핵심 내용"
+            lowered = heading.lower()
+            skip_section = lowered.startswith(("요청", "참고 출처", "sources", "검토", "작성 메모")) or heading.startswith(meta_headings)
+            current_title = heading
+            continue
+        if line.startswith("### "):
+            heading = line[4:].strip() or "세부 내용"
+            lowered = heading.lower()
+            if lowered.startswith(("참고 출처", "sources", "검토", "작성 메모")) or heading.startswith(meta_headings):
+                skip_section = True
+                continue
+            flush()
+            current_title = heading
+            skip_section = False
+            continue
+        if skip_section:
+            continue
+        if line.startswith("발표자용 검토 반영 요약:"):
+            continue
+        if line.startswith("- ") or line.startswith("* "):
+            current_bullets.append(line[2:].strip())
+            continue
+        current_bullets.append(line)
+    flush()
+
+    if not sections:
+        paragraphs = [line.strip() for line in body_text.splitlines() if line.strip()]
+        grouped = [paragraphs[i:i + 4] for i in range(0, len(paragraphs), 4)]
+        for idx, chunk in enumerate(grouped[:5], start=1):
+            sections.append({"title": f"핵심 내용 {idx}", "bullets": chunk[:6]})
+
+    if len(sections) > 6:
+        sections = sections[:6]
+    return sections or [{"title": "핵심 내용", "bullets": [body_text[:180] or "내용 없음"]}]
+
+
+def _build_structured_deliverable(title: str, body_text: str) -> dict:
+    slides = _build_ppt_slides_from_text(title, body_text)
+
+    def normalize_slide_title(raw_title: str) -> str:
+        text = str(raw_title or "핵심 내용").strip() or "핵심 내용"
+        match = re.match(r"^슬라이드\s*\d+\.\s*(.+)$", text)
+        if match:
+            return match.group(1).strip() or text
+        return text
+
+    slide_outline = [
+        {
+            "title": normalize_slide_title(item.get("title", "핵심 내용")),
+            "bullets": [
+                str(line).strip()
+                for line in item.get("bullets", [])
+                if str(line).strip()
+                and not str(line).strip().lower().startswith(("발표 포인트:", "발표자 메모:", "speaker notes:"))
+            ],
+            "speaker_notes": " ".join(
+                [
+                    str(line).split(":", 1)[1].strip()
+                    for line in item.get("bullets", [])
+                    if str(line).strip().lower().startswith(("발표 포인트:", "발표자 메모:", "speaker notes:"))
+                ][:2]
+            )
+            or " ".join(
+                [
+                    str(line).strip()
+                    for line in item.get("bullets", [])
+                    if str(line).strip()
+                    and not str(line).strip().lower().startswith(("출처:", "참고 출처"))
+                ][:2]
+            ),
+        }
+        for item in slides
+    ]
+    return {
+        "title": title,
+        "audience": "일반 청중",
+        "slide_outline": slide_outline,
+        "speaker_notes": [item["speaker_notes"] for item in slide_outline if item["speaker_notes"]],
+        "sources": _extract_sources_from_text(body_text),
+    }
+
+
+def _structured_deliverable_to_markdown(structured: dict, fallback_text: str) -> str:
+    title = str(structured.get("title") or "Deliverable").strip()
+    slide_outline = structured.get("slide_outline") or []
+    lines = [f"# {title}", ""]
+    if slide_outline:
+        lines.extend(["## Slide Outline", ""])
+        for idx, slide in enumerate(slide_outline, start=1):
+            lines.append(f"## 슬라이드 {idx}. {str(slide.get('title') or '핵심 내용').strip()}")
+            for bullet in slide.get("bullets") or []:
+                if str(bullet).strip():
+                    lines.append(f"- {str(bullet).strip()}")
+            note = str(slide.get("speaker_notes") or "").strip()
+            if note:
+                lines.append(f"- 발표 포인트: {note}")
+            lines.append("")
+    else:
+        lines.extend([fallback_text.strip(), ""])
+    sources = [str(item).strip() for item in structured.get("sources") or [] if str(item).strip()]
+    if sources:
+        lines.extend(["## 참고 출처", ""])
+        lines.extend([f"- {source}" for source in sources])
+        lines.append("")
+    return "\n".join(lines).strip() or fallback_text.strip()
+
+
+def _normalize_presentation_final_content(
+    *,
+    run: conversation_models.TeamRunModel,
+    content: str,
+    review_bodies: list[str],
+    appendix_sections: list[tuple[str, list[str]]] | None = None,
+) -> str:
+    structured = _build_structured_deliverable(run.title or "최종 발표자료", content)
+    markdown = _structured_deliverable_to_markdown(structured, content)
+    title = run.title or "최종 발표자료"
+    markdown_lines = markdown.splitlines()
+    if markdown_lines and markdown_lines[0].strip() == f"# {title}":
+        markdown_lines = markdown_lines[1:]
+        while markdown_lines and not markdown_lines[0].strip():
+            markdown_lines = markdown_lines[1:]
+    markdown_body = "\n".join(markdown_lines).strip()
+    review_lines = []
+    if review_bodies:
+        for raw in "\n".join(review_bodies[-1:]).splitlines():
+            line = raw.strip(" -")
+            if line:
+                review_lines.append(line)
+            if len(review_lines) >= 3:
+                break
+    blocks = [(section_title, [str(line).strip() for line in lines if str(line).strip()]) for section_title, lines in (appendix_sections or [])]
+    if review_lines:
+        blocks.append(("검토 메모", review_lines))
+
+    output_lines = [
+        f"# {title}",
+        "",
+        "## 요청",
+        str(run.request_text or "").strip() or "- 요청 없음",
+        "",
+        markdown_body,
+        "",
+    ]
+    for section_title, lines in blocks:
+        if not lines:
+            continue
+        output_lines.extend([f"## {section_title}", ""])
+        output_lines.extend([f"- {line}" for line in lines])
+        output_lines.append("")
+    return "\n".join(output_lines).strip()
+
+
+def _select_presentation_primary_body(draft_bodies: list[str]) -> str:
+    candidates = [str(body).strip() for body in draft_bodies if str(body).strip()]
+    if not candidates:
+        return ""
+
+    def score(text: str, index: int) -> tuple[int, int, int]:
+        lowered = text.lower()
+        value = 0
+        if "## 슬라이드" in text or "슬라이드 1" in text:
+            value += 5
+        if "발표 포인트" in text or "발표자 메모" in text:
+            value += 5
+        if "## slide outline" in lowered:
+            value += 3
+        if "검증 메모" in text:
+            value -= 6
+        if "## 좋은 점" in text or "## 문제점" in text:
+            value -= 6
+        if "자동 검토 종료 상태" in text:
+            value -= 8
+        return value, len(text), index
+
+    indexed = list(enumerate(candidates))
+    best_index, best_body = max(indexed, key=lambda item: score(item[1], item[0]))
+    return best_body
+
+
+@router.post("/web/team-runs/{team_run_id}/exports", status_code=200)
+def export_web_team_run_deliverable(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    run = team_svc.get_run(team_run_id)
+    if not run or not run.conversation_id:
+        raise HTTPException(status_code=404, detail="Team run not found")
+
+    export_format = str(payload.get("format") or "docx").strip().lower()
+    if export_format not in {"docx", "pptx"}:
+        raise HTTPException(status_code=400, detail="format must be docx or pptx")
+
+    deliverable = _extract_web_deliverable(db, run.conversation_id, run=run)
+    if not deliverable or not str(deliverable.get("content") or "").strip():
+        raise HTTPException(status_code=400, detail="No deliverable available to export")
+
+    title = str(run.title or "DocFlow Team Deliverable").strip()
+    content = str(deliverable.get("content") or "").strip()
+    filename_base = _slugify_filename(title, default="team-deliverable")
+    structured = _build_structured_deliverable(title, content)
+
+    if export_format == "docx":
+        docx_body = _structured_deliverable_to_markdown(structured, content)
+        file_bytes = generate_report_docx(title, docx_body)
+        filename = f"{filename_base}.docx"
+        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        extracted_text = docx_body
+    else:
+        slides = [
+            {
+                "title": slide.get("title", "핵심 내용"),
+                "bullets": slide.get("bullets", []),
+            }
+            for slide in structured.get("slide_outline") or []
+        ] or _build_ppt_slides_from_text(title, content)
+        file_bytes = generate_pptx(title, slides)
+        filename = f"{filename_base}.pptx"
+        mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        extracted_text = _structured_deliverable_to_markdown(structured, content)
+
+    file_row = _persist_team_export_file(
+        db,
+        run=run,
+        filename=filename,
+        content=file_bytes,
+        mime_type=mime_type,
+        extracted_text=extracted_text,
+    )
+    db.commit()
+    db.refresh(file_row)
+    return {
+        "file": {
+            "id": str(file_row.id),
+            "original_name": file_row.original_name,
+            "mime_type": file_row.mime_type,
+            "size": file_row.size,
+            "source_type": file_row.source_type,
+            "created_at": file_row.created_at.isoformat(),
+        },
+        "download_path": f"/api/files/{file_row.id}/download",
+        "format": export_format,
+    }
+
+
 def _compact_progress_text(text: str | None, max_chars: int = 90) -> str:
     compact = " ".join(str(text or "").split())
     if not compact:
@@ -1542,6 +2394,147 @@ def _compact_progress_text(text: str | None, max_chars: int = 90) -> str:
     if len(compact) > max_chars:
         return compact[: max_chars - 1] + "…"
     return compact
+
+
+def _looks_like_jsonish_text(text: str | None) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    return stripped.startswith("{") or stripped.startswith("[") or stripped.startswith("```json")
+
+
+def _normalize_text_block(text: str | None) -> str:
+    return " ".join(str(text or "").split()).strip()
+
+
+def _is_status_only_artifact(
+    *,
+    task: conversation_models.TeamTaskModel,
+    content: str | None,
+) -> bool:
+    compact = _normalize_text_block(content)
+    if not compact:
+        return True
+    lowered = compact.lower()
+    if _looks_like_jsonish_text(compact):
+        return True
+    if compact == task.title:
+        return True
+    if any(phrase in compact for phrase in TEAM_ARTIFACT_STATUS_PHRASES):
+        lines = [line.strip() for line in str(content or "").splitlines() if line.strip()]
+        if len(lines) <= 12:
+            return True
+    if "원요청:" in compact and any(phrase in compact for phrase in TEAM_ARTIFACT_STATUS_PHRASES):
+        return True
+    if lowered in {"draft", "review_notes", "final", "brief", "decision"}:
+        return True
+    return False
+
+
+def _best_effort_result_content(
+    *,
+    task: conversation_models.TeamTaskModel,
+    result: object | None,
+) -> str:
+    if result is None:
+        return ""
+    candidates = [
+        str(getattr(result, "text", "") or "").strip(),
+        str(getattr(result, "visible_message", "") or "").strip(),
+    ]
+    for candidate in candidates:
+        if not candidate or _looks_like_jsonish_text(candidate):
+            continue
+        if not _is_status_only_artifact(task=task, content=candidate):
+            return candidate
+    return ""
+
+
+def _task_execution_contract(
+    *,
+    run: conversation_models.TeamRunModel,
+    task: conversation_models.TeamTaskModel,
+) -> str:
+    preset = _infer_team_workflow_preset(run.request_text or run.title)
+    shared = (
+        "중요:\n"
+        "- `visible_message`는 진행 상태를 1문장으로만 쓰세요.\n"
+        "- 실제 결과물 본문은 반드시 `artifact_update.content`에 넣으세요.\n"
+        "- `artifact_update.content`에 '작성 중', '대기 중', '준비 중' 같은 상태 문구를 쓰면 실패로 처리됩니다.\n"
+        "- 원요청과 직접 관련된 실제 내용만 작성하세요. 메타 설명, TODO, 대기 상태 금지.\n"
+    )
+    if task.artifact_goal == "draft":
+        if preset == "presentation_team":
+            if task.owner_handle == "coder":
+                return (
+                    f"{shared}"
+                    "이번 작업은 발표자료용 근거 보강 메모 작성입니다.\n"
+                    "- writer 초안을 다시 쓰지 말고, 슬라이드별 검증 메모를 정리하세요.\n"
+                    "- 형식은 `## 슬라이드 1`, `## 슬라이드 2`를 사용하세요.\n"
+                    "- 각 슬라이드마다 `- 검증 메모:` 1개 이상, `- 출처:` 1개 이상을 포함하세요.\n"
+                    "- 확인되지 않은 수치는 유지하지 말고 `검증 필요` 또는 정성 표현으로 바꾸세요.\n"
+                    "- 공식 기관/공공데이터/보고서 중심으로 출처를 적고, 없으면 `출처 확인 필요`라고 명시하세요.\n"
+                )
+            return (
+                f"{shared}"
+                "이번 작업은 발표자료용 실제 슬라이드 초안 작성입니다.\n"
+                "- 청중은 정책 담당자이며, 발표 시간은 약 5분입니다.\n"
+                "- `## 슬라이드 1`, `## 슬라이드 2` 형식으로 정확히 5~6개 슬라이드를 구성하세요.\n"
+                "- 각 슬라이드마다 2~4개의 핵심 bullet과 `발표 포인트:` 1줄을 포함하세요.\n"
+                "- 슬라이드 제목은 짧고 결정적으로 쓰세요. 추상적 문구보다 정책 판단 문장을 우선하세요.\n"
+                "- 확인되지 않은 숫자나 기관명은 단정하지 말고 정성 표현 또는 `검증 필요`로 처리하세요.\n"
+                "- 마지막에 `## 참고 출처` 섹션을 포함하고, 출처가 없으면 `출처 확인 필요` 항목을 적으세요.\n"
+                f"- 반드시 원요청 '{run.request_text}'에 직접 답하는 발표 내용만 작성하세요.\n"
+            )
+        return (
+            f"{shared}"
+            "이번 작업은 실제 초안 작성입니다.\n"
+            "- 제목/섹션/본문이 있는 실질적인 초안을 작성하세요.\n"
+            "- 발표자료라면 슬라이드별 핵심 메시지와 발표 포인트를 포함하세요.\n"
+            f"- 반드시 원요청 '{run.request_text}'에 직접 답하는 내용을 작성하세요.\n"
+        )
+    if task.artifact_goal == "review_notes":
+        if preset == "presentation_team":
+            return (
+                f"{shared}"
+                "이번 작업은 발표자료 품질 검토입니다.\n"
+                "- 반드시 `## 좋은 점`, `## 문제점`, `## 수정 제안` 3개 섹션으로 작성하세요.\n"
+                "- 문제점에는 최소 3개 항목을 적고, 특히 출처/수치 신뢰성, 정책 실행 가능성, 슬라이드 흐름을 점검하세요.\n"
+                "- 발표자 질문을 받을 때 취약한 지점을 구체적으로 지적하세요.\n"
+                "- 단순히 '좋다/부족하다'가 아니라 어떤 슬라이드를 어떻게 바꿔야 하는지 적으세요.\n"
+            )
+        return (
+            f"{shared}"
+            "이번 작업은 실제 검토 메모 작성입니다.\n"
+            "- 좋은 점 1개 이상, 문제점 2개 이상, 개선 제안 1개 이상을 포함하세요.\n"
+            "- 초안이 부족하면 왜 부족한지 구체적으로 지적하세요.\n"
+            "- 단순히 '초안 대기'만 쓰면 실패입니다.\n"
+        )
+    if task.artifact_goal == "final":
+        if preset == "presentation_team":
+            return (
+                f"{shared}"
+                "이번 작업은 실제 최종 발표자료 작성입니다.\n"
+                "- writer 초안과 coder 검증 메모를 합쳐, 사용자에게 바로 전달 가능한 최종 발표자료를 작성하세요.\n"
+                "- `## 슬라이드 1` 형식으로 정확히 5~6개 슬라이드를 완성하세요.\n"
+                "- 각 슬라이드에 제목, 2~4개 bullet, `발표 포인트:` 1줄을 포함하세요.\n"
+                "- critic의 문제점을 반영해 출처 없는 숫자, 근거 없는 단정, 과한 장식 표현을 제거하세요.\n"
+                "- 마지막에 `## 참고 출처`를 넣고, 출처가 불완전하면 `출처 확인 필요`를 명시하세요.\n"
+                "- raw critique를 그대로 복붙하지 말고, 발표 자료 본문과 발표자 메모만 남기세요.\n"
+            )
+        return (
+            f"{shared}"
+            "이번 작업은 실제 최종 결과물 작성입니다.\n"
+            "- 최종 결론, 핵심 본문, 남은 리스크 또는 다음 액션을 포함하세요.\n"
+            "- review_notes를 반영해 사용자에게 바로 전달 가능한 완성본을 작성하세요.\n"
+        )
+    if task.artifact_goal in {"brief", "decision"}:
+        return (
+            f"{shared}"
+            "이번 작업은 실제 의사결정/브리프 문서 작성입니다.\n"
+            "- 요청 해석, 작업 기준, 다음 단계가 명확히 드러나야 합니다.\n"
+        )
+    return shared
 
 
 def _required_workflow_agents(mode: str | None) -> list[str]:
@@ -1567,10 +2560,195 @@ def _normalize_web_selected_agents(
     return normalized
 
 
+def _default_session_specs(selected_agents: list[str]) -> list[dict]:
+    info_by_handle = {
+        item["handle"]: item
+        for item in orchestrator.list_agents_info()
+    }
+    specs = []
+    for handle in selected_agents:
+        info = info_by_handle.get(handle, {})
+        specs.append(
+            {
+                "handle": handle,
+                "display_name": str(info.get("display_name") or handle),
+                "role": "leader" if handle == "planner" else "worker",
+            }
+        )
+    if not any(spec["handle"] == "planner" for spec in specs):
+        specs.insert(
+            0,
+            {
+                "handle": "planner",
+                "display_name": "planner",
+                "role": "leader",
+            },
+        )
+    return specs
+
+
+def _ensure_team_run_sessions(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+) -> list[conversation_models.TeamMemberSessionModel]:
+    existing = team_svc.list_sessions(run.id)
+    if existing:
+        return existing
+    sessions = []
+    for spec in _default_session_specs(list(run.selected_agents or [])):
+        sessions.append(
+            team_svc.create_session(
+                team_run_id=run.id,
+                handle=spec["handle"],
+                role=spec["role"],
+                display_name=spec["display_name"],
+            )
+        )
+    return sessions
+
+
+def _ensure_session_for_handle(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    handle: str,
+) -> conversation_models.TeamMemberSessionModel:
+    session = team_svc.find_session_by_handle(run.id, handle)
+    if session:
+        return session
+    info_by_handle = {item["handle"]: item for item in orchestrator.list_agents_info()}
+    info = info_by_handle.get(handle, {})
+    return team_svc.create_session(
+        team_run_id=run.id,
+        handle=handle,
+        role="leader" if handle == "planner" else "worker",
+        display_name=str(info.get("display_name") or handle),
+    )
+
+
+def _create_team_inbox_message(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    *,
+    to_handle: str,
+    content: str,
+    subject: str = "",
+    message_type: str = "direct",
+    from_handle: str | None = None,
+    related_task_id: uuid.UUID | None = None,
+) -> conversation_models.TeamInboxMessageModel | None:
+    if not content.strip():
+        return None
+    from_session = _ensure_session_for_handle(team_svc, run, from_handle) if from_handle else None
+    to_session = _ensure_session_for_handle(team_svc, run, to_handle)
+    return team_svc.create_inbox_message(
+        team_run_id=run.id,
+        from_session_id=from_session.id if from_session else None,
+        to_session_id=to_session.id if to_session else None,
+        related_task_id=related_task_id,
+        message_type=message_type,
+        subject=subject,
+        content=content.strip(),
+    )
+
+
+def _infer_team_workflow_preset(request_text: str | None) -> str:
+    lowered = str(request_text or "").strip().lower()
+    if any(keyword in lowered for keyword in PRESENTATION_REQUEST_KEYWORDS):
+        return "presentation_team"
+    return "default_team"
+
+
+def _presentation_team_tasks(
+    request_text: str,
+    selected_agents: list[str],
+) -> list[dict]:
+    tasks = [
+        {
+            "title": "요청 정리 및 작업 구조화",
+            "description": (
+                "발표 목적, 청중, 발표 길이, 핵심 메시지, 포함/제외 범위, 수치 표현 주의사항을 정리하고 "
+                "슬라이드 개수와 흐름 기준을 확정합니다."
+            ),
+            "owner_handle": "planner",
+            "artifact_goal": "brief",
+            "depends_on_titles": [],
+            "review_required": False,
+            "status": "done",
+            "priority": 10,
+        },
+        {
+            "title": "슬라이드 초안 작성",
+            "description": (
+                "정책 담당자 대상 발표를 전제로 5장 내외의 슬라이드 초안을 작성합니다. "
+                "각 슬라이드는 제목, 2~4개 bullet, 발표자 메모를 포함하고, "
+                "확인되지 않은 수치는 단정하지 말고 정성 표현 또는 검증 필요 메모로 처리합니다."
+            ),
+            "owner_handle": "writer",
+            "artifact_goal": "draft",
+            "depends_on_titles": ["요청 정리 및 작업 구조화"],
+            "review_required": True,
+            "status": "todo",
+            "priority": 30,
+        },
+    ]
+    if "coder" in selected_agents:
+        tasks.append(
+            {
+                "title": "사실 검증 및 출처 보강",
+                "description": (
+                    "writer 초안의 주장, 연도, 수치, 사례를 점검하고 슬라이드별 검증 메모와 참고 출처 후보를 보강합니다. "
+                    "불확실한 수치는 삭제 또는 완화 표현을 제안하고, 공식 기관/보고서/공공데이터 중심으로 출처를 정리합니다."
+                ),
+                "owner_handle": "coder",
+                "artifact_goal": "draft",
+                "depends_on_titles": ["슬라이드 초안 작성"],
+                "review_required": False,
+                "status": "todo",
+                "priority": 45,
+            }
+        )
+    critic_deps = ["슬라이드 초안 작성"]
+    if any(task["owner_handle"] == "coder" for task in tasks):
+        critic_deps.append("사실 검증 및 출처 보강")
+    tasks.extend(
+        [
+            {
+                "title": "슬라이드 흐름 및 메시지 검토",
+                "description": (
+                    "슬라이드 흐름, 메시지 선명도, 정책 실행 가능성, 안전 운영 논리, 수치/출처 리스크를 검토하고 "
+                    "수정 의견을 남깁니다."
+                ),
+                "owner_handle": "critic",
+                "artifact_goal": "review_notes",
+                "depends_on_titles": critic_deps,
+                "review_required": False,
+                "status": "todo",
+                "priority": 65,
+            },
+            {
+                "title": "최종 발표자료 정리",
+                "description": (
+                    "검토와 사실 보강 내용을 반영해 경영진/정책 보고에 바로 사용할 수 있는 최종 발표자료를 작성합니다. "
+                    "슬라이드 제목, 핵심 bullet, 발표자 메모, 참고 출처를 정리하고 군더더기 없는 완성본으로 마감합니다."
+                ),
+                "owner_handle": "manager",
+                "artifact_goal": "final",
+                "depends_on_titles": ["슬라이드 흐름 및 메시지 검토"],
+                "review_required": False,
+                "status": "todo",
+                "priority": 90,
+            },
+        ]
+    )
+    return tasks
+
+
 def _default_team_tasks(
     request_text: str,
     selected_agents: list[str],
 ) -> list[dict]:
+    if _infer_team_workflow_preset(request_text) == "presentation_team":
+        return _presentation_team_tasks(request_text, selected_agents)
     lowered = request_text.lower()
     tasks = [
         {
@@ -1637,6 +2815,88 @@ def _default_team_tasks(
     return tasks
 
 
+def _normalize_team_tasks(tasks: list[dict], selected_agents: list[str]) -> list[dict]:
+    if not tasks:
+        return []
+    normalized = [dict(task) for task in tasks]
+    seen_titles: set[str] = set()
+    deduped: list[dict] = []
+    for task in normalized:
+        title = str(task.get("title") or "").strip()
+        if not title or title.lower() in seen_titles:
+            continue
+        seen_titles.add(title.lower())
+        task["depends_on_titles"] = [
+            str(dep).strip()
+            for dep in task.get("depends_on_titles") or []
+            if str(dep).strip() and str(dep).strip() != title
+        ]
+        deduped.append(task)
+    normalized = deduped
+
+    planner_title = next(
+        (str(task["title"]) for task in normalized if task.get("owner_handle") == "planner"),
+        "",
+    )
+    for task in normalized:
+        if task.get("owner_handle") != "planner" and planner_title and not task.get("depends_on_titles"):
+            task["depends_on_titles"] = [planner_title]
+
+    review_source_titles = [
+        str(task["title"])
+        for task in normalized
+        if task.get("owner_handle") in {"writer", "coder"}
+        and task.get("artifact_goal") in {"draft", "decision"}
+    ]
+    decision_titles = [
+        str(task["title"])
+        for task in normalized
+        if task.get("owner_handle") == "manager"
+        and task.get("artifact_goal") == "decision"
+    ]
+    critic_titles = [
+        str(task["title"])
+        for task in normalized
+        if task.get("owner_handle") == "critic"
+    ]
+    for task in normalized:
+        if task.get("owner_handle") != "critic":
+            continue
+        deps = [str(dep).strip() for dep in task.get("depends_on_titles") or [] if str(dep).strip()]
+        merged = deps + [title for title in review_source_titles if title not in deps and title != task.get("title")]
+        task["artifact_goal"] = "review_notes"
+        task["depends_on_titles"] = merged
+
+    final_deps = critic_titles or decision_titles or review_source_titles
+    final_task = next(
+        (
+            task
+            for task in normalized
+            if task.get("owner_handle") == "manager" and task.get("artifact_goal") == "final"
+        ),
+        None,
+    )
+    if final_task:
+        deps = [str(dep).strip() for dep in final_task.get("depends_on_titles") or [] if str(dep).strip()]
+        merged = deps + [title for title in final_deps if title not in deps and title != final_task.get("title")]
+        final_task["depends_on_titles"] = merged
+        final_task["review_required"] = False
+    elif "manager" in set(selected_agents):
+        normalized.append(
+            {
+                "title": "최종 결과물 정리",
+                "description": "모든 작업과 검토 결과를 종합해 사용자에게 전달할 최종 결과물을 작성합니다.",
+                "owner_handle": "manager",
+                "artifact_goal": "final",
+                "depends_on_titles": final_deps,
+                "review_required": False,
+                "status": "todo",
+                "priority": max(int(task.get("priority") or 0) for task in normalized) + 20,
+            }
+        )
+    return normalized
+
+
 def _coerce_team_tasks(
     raw: object,
     selected_agents: list[str],
@@ -1664,6 +2924,14 @@ def _coerce_team_tasks(
             for dep in item.get("depends_on_titles") or []
             if str(dep).strip()
         ]
+        if owner_handle == "critic":
+            artifact_goal = "review_notes"
+        elif owner_handle == "manager" and artifact_goal not in {"brief", "draft", "review_notes", "decision", "final"}:
+            artifact_goal = "decision"
+        elif owner_handle == "planner" and artifact_goal not in {"brief", "draft", "review_notes", "decision", "final"}:
+            artifact_goal = "brief"
+        elif artifact_goal not in {"brief", "draft", "review_notes", "decision", "final"}:
+            artifact_goal = "draft"
         tasks.append(
             {
                 "title": title[:200],
@@ -1676,7 +2944,7 @@ def _coerce_team_tasks(
                 "priority": int(item.get("priority") or (10 + len(tasks) * 20)),
             }
         )
-    return tasks
+    return _normalize_team_tasks(tasks, selected_agents)
 
 
 async def _decompose_team_request(
@@ -1685,6 +2953,7 @@ async def _decompose_team_request(
 ) -> tuple[str, list[dict]]:
     orchestrator._ensure_loaded()
     planner = orchestrator._agents.get("planner")
+    preset = _infer_team_workflow_preset(request_text)
     if not planner:
         brief = f"요청 요약: {request_text[:500]}"
         return brief, _default_team_tasks(request_text, selected_agents)
@@ -1693,6 +2962,7 @@ async def _decompose_team_request(
         "다음 요청을 실무형 팀 작업으로 분해하세요.\n\n"
         f"요청:\n{request_text}\n\n"
         f"허용 담당자: {', '.join(selected_agents)}\n"
+        f"워크플로 프리셋: {preset}\n"
         "작업은 3~6개로 제한하고, title/description/owner_handle/artifact_goal/depends_on_titles/review_required를 채우세요."
     )
     schema = {
@@ -1729,14 +2999,169 @@ async def _decompose_team_request(
 
     if not brief:
         brief = f"요청 요약: {request_text[:500]}"
-    if not tasks:
+    if preset == "presentation_team":
+        tasks = _presentation_team_tasks(request_text, selected_agents)
+    elif not tasks:
         tasks = _default_team_tasks(request_text, selected_agents)
-    return brief, tasks
+    return brief, _normalize_team_tasks(tasks, selected_agents)
+
+
+def _review_snapshot(
+    task: conversation_models.TeamTaskModel,
+    task_artifacts: list[conversation_models.ConversationArtifactModel],
+    task_events: list[conversation_models.TeamActivityEventModel],
+) -> dict:
+    latest_review_artifact = next(
+        (artifact for artifact in reversed(task_artifacts) if artifact.artifact_type == "review_notes"),
+        None,
+    )
+    latest_review_event = next(
+        (
+            event
+            for event in reversed(task_events)
+            if event.event_type in {"review_approved", "review_rejected"}
+        ),
+        None,
+    )
+    has_review_notes = latest_review_artifact is not None
+    review_state = "not_required"
+    if latest_review_event and (
+        not latest_review_artifact
+        or latest_review_event.created_at >= latest_review_artifact.created_at
+    ):
+        review_state = "approved" if latest_review_event.event_type == "review_approved" else "rejected"
+    elif has_review_notes:
+        review_state = "reviewed"
+    elif task.review_required:
+        review_state = "required"
+    return {
+        "has_review_notes": has_review_notes,
+        "review_state": review_state,
+        "latest_review_artifact": latest_review_artifact,
+        "latest_review_event": latest_review_event,
+    }
+
+
+def _is_review_gate_task(task: conversation_models.TeamTaskModel) -> bool:
+    return task.artifact_goal == "review_notes"
+
+
+def _dependency_review_satisfied(
+    *,
+    run: conversation_models.TeamRunModel,
+    dependency_task: conversation_models.TeamTaskModel,
+    task_artifacts: list[conversation_models.ConversationArtifactModel],
+    task_events: list[conversation_models.TeamActivityEventModel],
+) -> bool:
+    if not _is_review_gate_task(dependency_task):
+        return True
+    snapshot = _review_snapshot(dependency_task, task_artifacts, task_events)
+    if run.oversight_mode == "manual":
+        return snapshot["review_state"] == "approved"
+    return snapshot["review_state"] in {"approved", "rejected"}
+
+
+def _eligible_ready_tasks(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]],
+    activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]],
+) -> list[conversation_models.TeamTaskModel]:
+    tasks = team_svc.list_tasks(run.id)
+    tasks_by_id = {str(task.id): task for task in tasks}
+    ready: list[conversation_models.TeamTaskModel] = []
+    for task in team_svc.ready_tasks(run.id):
+        dep_ids = [
+            str(dep.depends_on_task_id)
+            for dep in team_svc.list_dependencies(run.id)
+            if dep.team_task_id == task.id
+        ]
+        if all(
+            _dependency_review_satisfied(
+                run=run,
+                dependency_task=tasks_by_id[dep_id],
+                task_artifacts=artifacts_by_task.get(dep_id, []),
+                task_events=activity_by_task.get(dep_id, []),
+            )
+            for dep_id in dep_ids
+            if dep_id in tasks_by_id
+        ):
+            ready.append(task)
+    return ready
+
+
+def _select_idle_session_for_task(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    task: conversation_models.TeamTaskModel,
+) -> conversation_models.TeamMemberSessionModel | None:
+    sessions = [
+        session
+        for session in team_svc.list_sessions_by_handle(run.id, task.owner_handle)
+        if session.status == "idle" and not session.current_task_id
+    ]
+    if sessions:
+        return sessions[0]
+    return None
+
+
+def _claim_ready_tasks_for_idle_sessions(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    ready_tasks: list[conversation_models.TeamTaskModel],
+) -> list[tuple[conversation_models.TeamTaskModel, conversation_models.TeamMemberSessionModel]]:
+    claimed: list[tuple[conversation_models.TeamTaskModel, conversation_models.TeamMemberSessionModel]] = []
+    used_session_ids: set[uuid.UUID] = set()
+    for task in ready_tasks:
+        session = _select_idle_session_for_task(team_svc, run, task)
+        if not session or session.id in used_session_ids:
+            continue
+        claimed_task = team_svc.claim_task(task_id=task.id, session_id=session.id)
+        if not claimed_task:
+            continue
+        used_session_ids.add(session.id)
+        claimed.append((claimed_task, session))
+    return claimed
+
+
+def _session_inbox_context(
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    session: conversation_models.TeamMemberSessionModel | None,
+) -> tuple[str, list[uuid.UUID]]:
+    if not session:
+        return "", []
+    inbox_items = team_svc.list_session_inbox_messages(
+        team_run_id=run.id,
+        session_id=session.id,
+        include_read=False,
+        limit=8,
+    )
+    if not inbox_items:
+        inbox_items = team_svc.list_session_inbox_messages(
+            team_run_id=run.id,
+            session_id=session.id,
+            include_read=True,
+            limit=5,
+        )
+    if not inbox_items:
+        return "", []
+    lines = []
+    ids: list[uuid.UUID] = []
+    for item in inbox_items:
+        ids.append(item.id)
+        lines.append(
+            f"- [{item.message_type}] {item.subject or 'message'}: {item.content.strip()[:500]}"
+        )
+    return "세션 inbox:\n" + "\n".join(lines), ids
 
 
 def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunModel) -> dict:
     team_svc = TeamRunService(db)
     conv_svc = ConversationService(db)
+    sessions = team_svc.list_sessions(run.id)
+    session_by_id = {str(session.id): session for session in sessions}
+    inbox_messages = team_svc.list_inbox_messages(run.id, limit=120)
     tasks = team_svc.list_tasks(run.id)
     dependencies = team_svc.list_dependencies(run.id)
     deps_by_task: dict[str, list[str]] = {}
@@ -1745,7 +3170,7 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     tasks_by_id = {str(task.id): task for task in tasks}
     done_ids = {str(task.id) for task in tasks if task.status == "done"}
     conv = conv_svc.get_conversation(run.conversation_id) if run.conversation_id else None
-    messages = conv_svc.list_messages(run.conversation_id, limit=200) if run.conversation_id else []
+    conversation_messages = conv_svc.list_messages(run.conversation_id, limit=200) if run.conversation_id else []
     artifacts = (
         list(reversed(conv_svc.list_artifacts(run.conversation_id, limit=80)))
         if run.conversation_id
@@ -1760,37 +3185,67 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     for event in activity:
         if event.task_id:
             activity_by_task.setdefault(str(event.task_id), []).append(event)
+    auto_review_rounds_used = 0
+    for task in tasks:
+        if task.artifact_goal != "review_notes":
+            continue
+        rounds = sum(
+            1
+            for event in activity_by_task.get(str(task.id), [])
+            if event.event_type == "review_rejected"
+        )
+        auto_review_rounds_used = max(auto_review_rounds_used, rounds)
     serialized_tasks = []
     for task in tasks:
         serialized_tasks.append(
             _serialize_team_task_snapshot(
+                run=run,
                 task=task,
                 deps_by_task=deps_by_task,
                 tasks_by_id=tasks_by_id,
                 done_ids=done_ids,
+                session_by_id=session_by_id,
                 artifacts_by_task=artifacts_by_task,
                 activity_by_task=activity_by_task,
             )
         )
-    deliverable = _extract_web_deliverable(db, run.conversation_id) if run.conversation_id else None
-    return {
+    deliverable = _extract_web_deliverable(db, run.conversation_id, run=run) if run.conversation_id else None
+    payload = {
         "run": serialize_team_run(run),
         "conversation": serialize_conversation(conv) if conv else None,
-        "items": [serialize_message(msg) for msg in messages],
+        "items": [serialize_message(msg) for msg in conversation_messages],
         "tasks": serialized_tasks,
         "dependencies": [serialize_team_dependency(dep) for dep in dependencies],
         "activity": [serialize_team_activity(event) for event in activity],
+        "sessions": [serialize_team_session(session) for session in sessions],
+        "messages": [
+            {
+                **serialize_team_message(item),
+                "from_handle": session_by_id.get(str(item.from_session_id)).handle if item.from_session_id and str(item.from_session_id) in session_by_id else None,
+                "to_handle": session_by_id.get(str(item.to_session_id)).handle if item.to_session_id and str(item.to_session_id) in session_by_id else None,
+            }
+            for item in inbox_messages
+        ],
         "artifacts": [serialize_artifact(artifact) for artifact in artifacts],
         "deliverable": deliverable,
     }
+    leader_session = next((session for session in sessions if session.role == "leader"), None)
+    payload["run"]["leader_session_id"] = str(leader_session.id) if leader_session else None
+    payload["run"]["active_sessions"] = len([session for session in sessions if session.status != "offline"])
+    payload["run"]["workflow_preset"] = _infer_team_workflow_preset(run.request_text or run.title)
+    payload["run"]["auto_review_max_rounds"] = AUTO_REVIEW_MAX_ROUNDS
+    payload["run"]["auto_review_rounds_used"] = auto_review_rounds_used
+    return payload
 
 
 def _serialize_team_task_snapshot(
     *,
+    run: conversation_models.TeamRunModel,
     task: conversation_models.TeamTaskModel,
     deps_by_task: dict[str, list[str]],
     tasks_by_id: dict[str, conversation_models.TeamTaskModel],
     done_ids: set[str],
+    session_by_id: dict[str, conversation_models.TeamMemberSessionModel],
     artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]],
     activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]],
 ) -> dict:
@@ -1801,15 +3256,7 @@ def _serialize_team_task_snapshot(
     task_events = activity_by_task.get(task_id, [])
     latest_artifact = task_artifacts[-1] if task_artifacts else None
     latest_event = task_events[-1] if task_events else None
-    has_review_notes = any(artifact.artifact_type == "review_notes" for artifact in task_artifacts)
-    latest_review_event = next(
-        (
-            event
-            for event in reversed(task_events)
-            if event.event_type in {"review_approved", "review_rejected"}
-        ),
-        None,
-    )
+    review = _review_snapshot(task, task_artifacts, task_events)
 
     item["depends_on_task_ids"] = dep_ids
     item["depends_on_titles"] = [
@@ -1817,23 +3264,28 @@ def _serialize_team_task_snapshot(
         for dep_id in dep_ids
         if dep_id in tasks_by_id
     ]
-    item["ready"] = task.status == "todo" and set(dep_ids).issubset(done_ids)
+    item["ready"] = task.status == "todo" and task.claim_status == "open" and set(dep_ids).issubset(done_ids) and all(
+        _dependency_review_satisfied(
+            run=run,
+            dependency_task=tasks_by_id[dep_id],
+            task_artifacts=artifacts_by_task.get(dep_id, []),
+            task_events=activity_by_task.get(dep_id, []),
+        )
+        for dep_id in dep_ids
+        if dep_id in tasks_by_id
+    )
     item["artifact_count"] = len(task_artifacts)
     item["latest_artifact_type"] = latest_artifact.artifact_type if latest_artifact else None
     item["latest_artifact_created_at"] = latest_artifact.created_at.isoformat() if latest_artifact else None
     item["latest_activity_type"] = latest_event.event_type if latest_event else None
     item["latest_activity_at"] = latest_event.created_at.isoformat() if latest_event else None
-    item["has_review_notes"] = has_review_notes
-    if latest_review_event and latest_review_event.event_type == "review_approved":
-        item["review_state"] = "approved"
-    elif latest_review_event and latest_review_event.event_type == "review_rejected":
-        item["review_state"] = "rejected"
-    elif has_review_notes:
-        item["review_state"] = "reviewed"
-    elif task.review_required:
-        item["review_state"] = "required"
-    else:
-        item["review_state"] = "not_required"
+    item["claimed_by_handle"] = (
+        session_by_id.get(str(task.claimed_by_session_id)).handle
+        if task.claimed_by_session_id and str(task.claimed_by_session_id) in session_by_id
+        else None
+    )
+    item["has_review_notes"] = bool(review["has_review_notes"])
+    item["review_state"] = str(review["review_state"])
     return item
 
 
@@ -1850,6 +3302,8 @@ def _build_team_task_detail(
         raise HTTPException(status_code=404, detail="Team run not found")
 
     tasks = team_svc.list_tasks(run.id)
+    sessions = team_svc.list_sessions(run.id)
+    session_by_id = {str(session.id): session for session in sessions}
     tasks_by_id = {str(item.id): item for item in tasks}
     dependencies = team_svc.list_dependencies(run.id)
     deps_by_task: dict[str, list[str]] = {}
@@ -1873,10 +3327,12 @@ def _build_team_task_detail(
             activity_by_task.setdefault(str(event.task_id), []).append(event)
 
     task_snapshot = _serialize_team_task_snapshot(
+        run=run,
         task=task,
         deps_by_task=deps_by_task,
         tasks_by_id=tasks_by_id,
         done_ids=done_ids,
+        session_by_id=session_by_id,
         artifacts_by_task=artifacts_by_task,
         activity_by_task=activity_by_task,
     )
@@ -1900,6 +3356,7 @@ def _build_team_task_detail(
             serialize_team_activity(event)
             for event in activity_by_task.get(str(task.id), [])
         ],
+        "sessions": [serialize_team_session(session) for session in sessions],
         "artifacts": [
             serialize_artifact(artifact)
             for artifact in artifacts_by_task.get(str(task.id), [])
@@ -1916,28 +3373,42 @@ def _fallback_task_artifact_content(
     review_bodies: list[str],
 ) -> str:
     visible = ""
+    preset = _infer_team_workflow_preset(run.request_text or run.title)
     if result is not None:
         visible = str(getattr(result, "visible_message", "") or "").strip()
+    substantive = _best_effort_result_content(task=task, result=result)
     if task.artifact_goal == "brief":
         return (
             f"요청 개요\n"
             f"- 제목: {run.title}\n"
             f"- 요청자: {run.requested_by}\n"
             f"- 요청: {run.request_text}\n\n"
-            f"작업 메모\n{visible or task.description}"
+            f"작업 메모\n{substantive or visible or task.description}"
         ).strip()
     if task.artifact_goal == "review_notes":
-        base = visible or task.description
+        base = substantive or visible or task.description
         return f"검토 메모\n- 작업: {task.title}\n- 담당: {task.owner_handle}\n- 메모: {base}"
     if task.artifact_goal == "final":
         draft_text = "\n\n".join(draft_bodies) if draft_bodies else "- 초안 없음"
         review_text = "\n\n".join(review_bodies) if review_bodies else "- 검토 메모 없음"
+        if preset == "presentation_team":
+            slide_body = draft_text if draft_bodies else (substantive or visible or task.description)
+            structured = _build_structured_deliverable(run.title or "최종 발표자료", slide_body)
+            markdown = _structured_deliverable_to_markdown(structured, slide_body)
+            return (
+                f"# {run.title or '최종 발표자료'}\n\n"
+                f"## 요청\n{run.request_text}\n\n"
+                f"{markdown}\n\n"
+                f"## 검토 요약\n{review_text}\n"
+            ).strip()
         return (
             f"# {run.title or '최종 결과물'}\n\n"
             f"요청\n{run.request_text}\n\n"
             f"핵심 결과\n{draft_text}\n\n"
             f"검토 요약\n{review_text}\n"
         ).strip()
+    if substantive:
+        return substantive
     return (
         f"{task.title}\n\n"
         f"{visible or task.description}\n\n"
@@ -1945,10 +3416,38 @@ def _fallback_task_artifact_content(
     ).strip()
 
 
+def _latest_rework_feedback_for_task(
+    *,
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+    task_id: uuid.UUID,
+) -> dict | None:
+    task_id_str = str(task_id)
+    for event in reversed(team_svc.list_activity(run_id, limit=240)):
+        if event.event_type != "review_rejected":
+            continue
+        payload = event.payload or {}
+        reopened_ids = [str(item) for item in payload.get("reopened_task_ids") or []]
+        if task_id_str not in reopened_ids:
+            continue
+        summary = str(payload.get("summary") or "").strip()
+        risk_summary = str(payload.get("risk_summary") or "").strip()
+        if not summary and not risk_summary:
+            summary = str(event.summary or "").strip()
+        return {
+            "summary": summary,
+            "risk_summary": risk_summary,
+            "created_at": event.created_at.isoformat(),
+        }
+    return None
+
+
 async def _execute_team_task(
     db: Session,
     run: conversation_models.TeamRunModel,
     task: conversation_models.TeamTaskModel,
+    *,
+    session: conversation_models.TeamMemberSessionModel | None = None,
 ) -> tuple[conversation_models.ConversationArtifactModel | None, str | None]:
     orchestrator._ensure_loaded()
     conv_svc = ConversationService(db)
@@ -1982,6 +3481,23 @@ async def _execute_team_task(
             draft_bodies.append(body)
         if artifact.artifact_type == "review_notes":
             review_bodies.append(body)
+    rework_feedback = _latest_rework_feedback_for_task(
+        team_svc=team_svc,
+        run_id=run.id,
+        task_id=task.id,
+    )
+    claimed_session = session
+    if not claimed_session and task.claimed_by_session_id:
+        claimed_session = team_svc.get_session(task.claimed_by_session_id)
+    inbox_context, consumed_inbox_ids = _session_inbox_context(team_svc, run, claimed_session)
+    execution_contract = _task_execution_contract(run=run, task=task)
+    rework_clause = (
+        "최근 자동 반려 피드백을 반드시 반영하세요.\n"
+        f"- 핵심 사유: {rework_feedback.get('summary')}\n"
+        f"- 보강 포인트: {rework_feedback.get('risk_summary')}\n\n"
+        if rework_feedback
+        else ""
+    )
     context = "\n\n".join(
         part
         for part in (
@@ -1989,17 +3505,41 @@ async def _execute_team_task(
             f"원요청: {run.request_text}",
             f"현재 작업: {task.title}",
             f"작업 설명: {task.description}",
+            (
+                "최근 자동 반려 피드백:\n"
+                f"- 핵심 사유: {rework_feedback.get('summary') or '없음'}\n"
+                f"- 보강 포인트: {rework_feedback.get('risk_summary') or '없음'}"
+            )
+            if rework_feedback
+            else "",
+            execution_contract,
+            (
+                f"세션 정보:\n- handle: {claimed_session.handle}\n- role: {claimed_session.role}\n- 최근 요약: {claimed_session.context_window_summary or '없음'}"
+            )
+            if claimed_session
+            else "",
+            inbox_context,
             "기존 작업공간:\n" + "\n\n".join(artifact_lines) if artifact_lines else "",
         )
         if part
     )
     user_request = (
-        f"팀 작업을 수행하세요.\n"
-        f"- 작업명: {task.title}\n"
-        f"- 담당자: {task.owner_handle}\n"
-        f"- 목표 산출물: {task.artifact_goal}\n"
-        f"- 작업 설명: {task.description}\n"
-        f"- 원요청: {run.request_text}"
+        "\n".join(
+            part
+            for part in (
+                "팀 작업을 수행하세요.",
+                f"- 작업명: {task.title}",
+                f"- 담당자: {task.owner_handle}",
+                f"- 목표 산출물: {task.artifact_goal}",
+                f"- 작업 설명: {task.description}",
+                f"- 원요청: {run.request_text}",
+                "",
+                inbox_context if inbox_context else "",
+                rework_clause.strip() if rework_clause else "",
+                execution_contract,
+            )
+            if part is not None
+        )
     )
     agent_run = conv_svc.create_agent_run(
         conversation_id=conv.id,
@@ -2025,17 +3565,78 @@ async def _execute_team_task(
         db.commit()
         return None, str(exc)
 
-    artifact_update = result.artifact_update or {}
-    artifact_type = str(artifact_update.get("type") or task.artifact_goal or "draft").strip().lower()
-    artifact_content = str(artifact_update.get("content") or "").strip()
-    if not artifact_content:
-        artifact_content = _fallback_task_artifact_content(
-            task=task,
+    def build_artifact_payload(agent_result: object) -> tuple[str, str]:
+        artifact_update = getattr(agent_result, "artifact_update", None) or {}
+        artifact_type = str(artifact_update.get("type") or task.artifact_goal or "draft").strip().lower()
+        if _is_review_gate_task(task):
+            artifact_type = "review_notes"
+        artifact_content = str(artifact_update.get("content") or "").strip()
+        if not artifact_content:
+            artifact_content = _fallback_task_artifact_content(
+                task=task,
+                run=run,
+                result=agent_result,
+                draft_bodies=draft_bodies,
+                review_bodies=review_bodies,
+            )
+        return artifact_type, artifact_content
+
+    artifact_type, artifact_content = build_artifact_payload(result)
+    if (
+        task.artifact_goal == "final"
+        and _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team"
+        and artifact_content.strip()
+    ):
+        artifact_content = _normalize_presentation_final_content(
             run=run,
-            result=result,
-            draft_bodies=draft_bodies,
+            content=artifact_content,
             review_bodies=review_bodies,
         )
+    if _is_status_only_artifact(task=task, content=artifact_content):
+        repair_request = (
+            f"{user_request}\n\n"
+            "방금 출력은 상태 문구에 그쳐 실패했습니다. "
+            "이번에는 `artifact_update.content`에 실제 결과물 본문만 다시 작성하세요. "
+            "진행 상태, 대기 안내, 메타 설명은 금지입니다."
+        )
+        repair_context = (
+            f"{context}\n\n"
+            "직전 출력이 '작성 중/대기 중/준비 중' 같은 상태 문구로만 구성되어 실패했습니다. "
+            "실제 본문 초안/검토/최종본을 충분히 작성하세요."
+        )
+        try:
+            result = await agent.run(user_request=repair_request, context=repair_context)
+            artifact_type, artifact_content = build_artifact_payload(result)
+            if (
+                task.artifact_goal == "final"
+                and _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team"
+                and artifact_content.strip()
+            ):
+                artifact_content = _normalize_presentation_final_content(
+                    run=run,
+                    content=artifact_content,
+                    review_bodies=review_bodies,
+                )
+        except Exception as exc:
+            conv_svc.finish_agent_run(
+                agent_run.id,
+                output="",
+                input_snapshot=repair_request,
+                input_context_snapshot=repair_context,
+                error=str(exc),
+            )
+            db.commit()
+            return None, str(exc)
+    if _is_status_only_artifact(task=task, content=artifact_content):
+        conv_svc.finish_agent_run(
+            agent_run.id,
+            output=str(getattr(result, "text", "") or getattr(result, "visible_message", "") or ""),
+            input_snapshot=user_request,
+            input_context_snapshot=context,
+            error="non-substantive artifact generated",
+        )
+        db.commit()
+        return None, "non-substantive artifact generated"
     artifact = conv_svc.create_or_replace_artifact(
         conversation_id=conv.id,
         task_id=task.id,
@@ -2063,7 +3664,7 @@ async def _execute_team_task(
     )
     conv_svc.finish_agent_run(
         agent_run.id,
-        output=visible_message,
+        output=str(result.text or visible_message),
         input_snapshot=user_request,
         input_context_snapshot=context,
         suggested_next_agent=None,
@@ -2074,6 +3675,20 @@ async def _execute_team_task(
         progress_detected=True,
         termination_reason="task_completed",
     )
+    if claimed_session:
+        team_svc.update_session(
+            claimed_session.id,
+            context_window_summary=(
+                f"{task.title} -> {artifact.artifact_type}: "
+                f"{artifact.content.strip().replace(chr(10), ' ')[:240]}"
+            ),
+        )
+        if consumed_inbox_ids:
+            team_svc.mark_inbox_messages_read(consumed_inbox_ids)
+            team_svc.update_session(
+                claimed_session.id,
+                inbox_cursor=claimed_session.inbox_cursor + len(consumed_inbox_ids),
+            )
     if artifact.artifact_type == "final":
         team_svc.update_run(run.id, final_artifact_id=artifact.id)
         conv.export_ready = True
@@ -2084,6 +3699,345 @@ async def _execute_team_task(
     return artifact, None
 
 
+def _review_rejection_count(
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+    review_task_id: uuid.UUID,
+) -> int:
+    return sum(
+        1
+        for event in team_svc.list_activity(run_id, limit=240)
+        if event.task_id == review_task_id and event.event_type == "review_rejected"
+    )
+
+
+def _find_final_task(
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+) -> conversation_models.TeamTaskModel | None:
+    tasks = team_svc.list_tasks(run_id)
+    for task in tasks:
+        if task.artifact_goal == "final":
+            return task
+    for task in tasks:
+        if task.owner_handle == "manager":
+            return task
+    return None
+
+
+async def _manager_auto_review_decision(
+    db: Session,
+    run: conversation_models.TeamRunModel,
+    review_task: conversation_models.TeamTaskModel,
+    review_artifact: conversation_models.ConversationArtifactModel,
+) -> dict:
+    orchestrator._ensure_loaded()
+    conv_svc = ConversationService(db)
+    artifacts = list(reversed(conv_svc.list_artifacts(run.conversation_id, limit=40))) if run.conversation_id else []
+    draft_bodies = [artifact.content.strip() for artifact in artifacts if artifact.artifact_type == "draft" and artifact.content.strip()]
+    review_bodies = [artifact.content.strip() for artifact in artifacts if artifact.artifact_type == "review_notes" and artifact.content.strip()]
+    manager = orchestrator._agents.get("manager")
+    prompt = (
+        "당신은 PM(manager)입니다. critic의 review_notes를 보고 승인/반려를 결정하세요.\n\n"
+        f"팀 실행 제목: {run.title}\n"
+        f"원요청: {run.request_text}\n"
+        f"검토 작업: {review_task.title}\n\n"
+        f"최신 초안:\n{chr(10).join(draft_bodies[-2:]) if draft_bodies else '- 초안 없음'}\n\n"
+        f"최신 검토 메모:\n{review_artifact.content.strip()}\n\n"
+        "반드시 approve 또는 reject 중 하나를 선택하고, 한두 문장 요약과 남은 리스크를 적으세요."
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "decision": {"type": "string"},
+            "summary": {"type": "string"},
+            "risk_summary": {"type": "string"},
+        },
+    }
+    structured: dict = {}
+    if manager and getattr(manager, "_provider", None):
+        try:
+            structured = await manager._provider.generate_structured(prompt, schema)  # type: ignore[attr-defined]
+        except Exception:
+            structured = {}
+
+    raw = " ".join(
+        part
+        for part in (
+            str(structured.get("decision") or "").strip(),
+            str(structured.get("summary") or "").strip(),
+            str(structured.get("risk_summary") or "").strip(),
+            str(structured.get("raw") or "").strip(),
+            review_artifact.content.strip(),
+        )
+        if part
+    ).lower()
+    decision = str(structured.get("decision") or "").strip().lower()
+    fallback_used = decision not in {"approve", "reject"}
+    if decision not in {"approve", "reject"}:
+        decision = "reject" if any(keyword in raw for keyword in AUTO_REVIEW_REJECT_KEYWORDS) else "approve"
+    summary = str(structured.get("summary") or "").strip()
+    if not summary:
+        summary = (
+            "자동 검토 결과, 추가 보강이 필요해 반려합니다."
+            if decision == "reject"
+            else "자동 검토 결과, 현재 품질로 승인 가능합니다."
+        )
+    risk_summary = str(structured.get("risk_summary") or "").strip()
+    if not risk_summary and decision == "reject":
+        risk_summary = "critic review_notes 기준으로 근거/표현 보강이 더 필요합니다."
+    elif not risk_summary:
+        risk_summary = "현재 자동 검토 기준에서 치명적 리스크는 발견되지 않았습니다."
+    return {
+        "decision": decision,
+        "summary": summary,
+        "risk_summary": risk_summary,
+        "fallback_used": fallback_used,
+        "review_bodies": review_bodies,
+        "draft_bodies": draft_bodies,
+    }
+
+
+def _build_done_with_risks_content(
+    *,
+    run: conversation_models.TeamRunModel,
+    draft_bodies: list[str],
+    review_bodies: list[str],
+    summary: str,
+    risk_summary: str,
+    rounds_used: int,
+) -> str:
+    draft_text = "\n\n".join(draft_bodies[-2:]) if draft_bodies else "- 초안 없음"
+    review_text = "\n\n".join(review_bodies[-2:]) if review_bodies else "- 검토 메모 없음"
+    if _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team":
+        primary_draft = _select_presentation_primary_body(draft_bodies)
+        fallback_body = primary_draft or (
+            "## 슬라이드 1: 자동 검토 마감\n"
+            "- 자동 검토가 리스크 포함 상태로 종료되었습니다.\n"
+            f"- 현재 판단: {summary}\n"
+            f"- 남은 리스크: {risk_summary}\n"
+            "- 발표 포인트: 본 발표안은 추가 근거 보강이 필요한 상태입니다.\n"
+        )
+        return _normalize_presentation_final_content(
+            run=run,
+            content=fallback_body,
+            review_bodies=review_bodies,
+            appendix_sections=[
+                (
+                    "작성 메모",
+                    [
+                        "상태: done_with_risks",
+                        f"자동 반려 횟수: {rounds_used}",
+                        f"현재 판단: {summary}",
+                        f"남은 리스크: {risk_summary}",
+                    ],
+                )
+            ],
+        )
+    return (
+        f"# {run.title or '최종 결과물'}\n\n"
+        "## 자동 검토 종료 상태\n"
+        f"- 상태: done_with_risks\n"
+        f"- 자동 반려 횟수: {rounds_used}\n"
+        f"- 요청: {run.request_text}\n\n"
+        "## 현재 판단\n"
+        f"{summary}\n\n"
+        "## 남은 리스크\n"
+        f"{risk_summary}\n\n"
+        "## 최신 초안\n"
+        f"{draft_text}\n\n"
+        "## 최신 검토 메모\n"
+        f"{review_text}\n"
+    ).strip()
+
+
+def _publish_done_with_risks(
+    db: Session,
+    run: conversation_models.TeamRunModel,
+    review_task: conversation_models.TeamTaskModel,
+    *,
+    summary: str,
+    risk_summary: str,
+    draft_bodies: list[str],
+    review_bodies: list[str],
+    rounds_used: int,
+) -> conversation_models.ConversationArtifactModel | None:
+    conv_svc = ConversationService(db)
+    team_svc = TeamRunService(db)
+    conv = conv_svc.get_conversation(run.conversation_id) if run.conversation_id else None
+    if not conv:
+        return None
+    participant = conv_svc.get_or_create_participant(
+        conversation_id=conv.id,
+        handle="manager",
+        type="agent",
+        display_name="manager",
+    )
+    final_task = _find_final_task(team_svc, run.id)
+    content = _build_done_with_risks_content(
+        run=run,
+        draft_bodies=draft_bodies,
+        review_bodies=review_bodies,
+        summary=summary,
+        risk_summary=risk_summary,
+        rounds_used=rounds_used,
+    )
+    artifact = conv_svc.create_or_replace_artifact(
+        conversation_id=conv.id,
+        task_id=final_task.id if final_task else review_task.id,
+        artifact_type="final",
+        content=content,
+        created_by_handle="manager",
+        replace_latest=True,
+    )
+    conv_svc.create_message(
+        conversation_id=conv.id,
+        raw_text="자동 검토 한도에 도달해 리스크 포함 최종본으로 마감합니다.",
+        rendered_text="자동 검토 한도에 도달해 리스크 포함 최종본으로 마감합니다.",
+        message_type="agent",
+        participant_id=participant.id,
+        visible_message="자동 검토 한도에 도달해 리스크 포함 최종본으로 마감합니다.",
+        speaker_role="manager",
+        speaker_identity="manager",
+        task_status="리스크 포함 최종본 마감",
+        done=True,
+        needs_user_input=False,
+        is_progress_turn=True,
+        is_agent_message=True,
+    )
+    if final_task:
+        team_svc.update_task(final_task.id, status="done")
+    team_svc.update_run(run.id, final_artifact_id=artifact.id, status="done_with_risks")
+    conv.export_ready = True
+    conv.done = True
+    conv.status = "idle"
+    conv.updated_at = now_utc()
+    return artifact
+
+
+async def _maybe_auto_review_task(
+    db: Session,
+    run: conversation_models.TeamRunModel,
+    task: conversation_models.TeamTaskModel,
+    artifact: conversation_models.ConversationArtifactModel | None,
+) -> None:
+    if run.oversight_mode != "auto" or not artifact or artifact.artifact_type != "review_notes":
+        return
+    team_svc = TeamRunService(db)
+    team_svc.create_activity(
+        team_run_id=run.id,
+        task_id=task.id,
+        event_type="auto_review_started",
+        actor_handle="manager",
+        target_handle=task.owner_handle,
+        summary=f"manager가 '{task.title}' 자동 검토 판정을 시작했습니다.",
+    )
+    db.commit()
+
+    decision = await _manager_auto_review_decision(db, run, task, artifact)
+    if decision["fallback_used"]:
+        team_svc.create_activity(
+            team_run_id=run.id,
+            task_id=task.id,
+            event_type="auto_review_fallback",
+            actor_handle="manager",
+            target_handle=task.owner_handle,
+            summary=f"manager가 '{task.title}' 자동 검토를 fallback 규칙으로 판정했습니다.",
+            payload={"decision": decision["decision"]},
+        )
+    if decision["decision"] == "approve":
+        team_svc.create_activity(
+            team_run_id=run.id,
+            task_id=task.id,
+            event_type="review_approved",
+            actor_handle="manager",
+            target_handle=task.owner_handle,
+            summary=f"manager가 '{task.title}' 검토를 자동 승인했습니다.",
+            payload={"summary": decision["summary"]},
+        )
+        final_task = _find_final_task(team_svc, run.id)
+        if final_task:
+            _create_team_inbox_message(
+                team_svc,
+                run,
+                from_handle="manager",
+                to_handle=final_task.owner_handle,
+                related_task_id=final_task.id,
+                message_type="review_feedback",
+                subject="자동 검토 승인",
+                content=f"'{task.title}' 검토가 자동 승인되었습니다. 최종 산출물을 정리하세요.",
+            )
+        db.commit()
+        return
+
+    rounds_used = _review_rejection_count(team_svc, run.id, task.id) + 1
+    if rounds_used > AUTO_REVIEW_MAX_ROUNDS:
+        final_artifact = _publish_done_with_risks(
+            db,
+            run,
+            task,
+            summary=decision["summary"],
+            risk_summary=decision["risk_summary"],
+            draft_bodies=decision["draft_bodies"],
+            review_bodies=decision["review_bodies"],
+            rounds_used=rounds_used - 1,
+        )
+        team_svc.create_activity(
+            team_run_id=run.id,
+            task_id=task.id,
+            event_type="final_published",
+            actor_handle="manager",
+            target_handle=task.owner_handle,
+            summary=f"자동 검토가 {AUTO_REVIEW_MAX_ROUNDS}회 재작업 후 종료되어 리스크 포함 최종본으로 마감됐습니다.",
+            payload={"artifact_id": str(final_artifact.id)} if final_artifact else None,
+        )
+        db.commit()
+        return
+
+    reopened = _reopen_review_branch(
+        team_svc=team_svc,
+        run_id=run.id,
+        review_task_id=task.id,
+    )
+    _supersede_reopened_task_artifacts(db, run=run, tasks=reopened)
+    team_svc.create_activity(
+        team_run_id=run.id,
+        task_id=task.id,
+        event_type="review_rejected",
+        actor_handle="manager",
+        target_handle=task.owner_handle,
+        summary=(
+            f"manager가 '{task.title}' 검토를 자동 반려했고 "
+            f"재작업 대상 {len(reopened)}개를 다시 열었습니다."
+        ),
+        payload={
+            "reopened_task_ids": [str(item.id) for item in reopened],
+            "round": rounds_used,
+            "summary": decision["summary"],
+            "risk_summary": decision["risk_summary"],
+        },
+    )
+    for reopened_task in reopened:
+        if reopened_task.id == task.id:
+            continue
+        _create_team_inbox_message(
+            team_svc,
+            run,
+            from_handle="manager",
+            to_handle=reopened_task.owner_handle,
+            related_task_id=reopened_task.id,
+            message_type="review_feedback",
+            subject="자동 검토 반려",
+            content=(
+                f"자동 검토에서 재작업이 필요합니다.\n"
+                f"- 핵심 사유: {decision['summary']}\n"
+                f"- 보강 포인트: {decision['risk_summary']}"
+            ),
+        )
+    team_svc.update_run(run.id, status="active")
+    db.commit()
+
+
 async def _run_team_scheduler(
     db: Session,
     team_run_id: uuid.UUID,
@@ -2092,6 +4046,8 @@ async def _run_team_scheduler(
     run = team_svc.get_run(team_run_id)
     if not run:
         return None
+    if run.plan_status != "approved":
+        return run
 
     team_svc.update_run(run.id, status="running")
     db.commit()
@@ -2100,68 +4056,146 @@ async def _run_team_scheduler(
         run = team_svc.get_run(team_run_id)
         if not run:
             return None
-        ready = team_svc.ready_tasks(run.id)
+        conv_svc = ConversationService(db)
+        artifacts = (
+            list(reversed(conv_svc.list_artifacts(run.conversation_id, limit=120)))
+            if run.conversation_id
+            else []
+        )
+        artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]] = {}
+        for artifact in artifacts:
+            if artifact.task_id:
+                artifacts_by_task.setdefault(str(artifact.task_id), []).append(artifact)
+        activity = team_svc.list_activity(run.id, limit=240)
+        activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]] = {}
+        for event in activity:
+            if event.task_id:
+                activity_by_task.setdefault(str(event.task_id), []).append(event)
+        ready = _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task)
         if not ready:
             break
-        for task in ready:
+        claimed_pairs = _claim_ready_tasks_for_idle_sessions(team_svc, run, ready)
+        if not claimed_pairs:
+            for task in ready:
+                _ensure_session_for_handle(team_svc, run, task.owner_handle)
+            claimed_pairs = _claim_ready_tasks_for_idle_sessions(team_svc, run, ready)
+        if not claimed_pairs:
+            break
+        for task, session in claimed_pairs:
             team_svc.update_task(task.id, status="in_progress")
             team_svc.create_activity(
                 team_run_id=run.id,
                 task_id=task.id,
+                event_type="task_claimed",
+                actor_handle=session.handle,
+                target_handle=task.owner_handle,
+                summary=f"{session.handle} 세션이 ready 상태의 '{task.title}' 작업을 선점했습니다.",
+                payload={"session_id": str(session.id)},
+            )
+            team_svc.create_activity(
+                team_run_id=run.id,
+                task_id=task.id,
                 event_type="task_started",
-                actor_handle=task.owner_handle,
-                summary=f"{task.owner_handle}가 '{task.title}' 작업을 시작했습니다.",
+                actor_handle=session.handle,
+                summary=f"{session.handle} 세션이 '{task.title}' 작업을 시작했습니다.",
             )
             db.commit()
 
-            artifact, error = await _execute_team_task(db, run, task)
+            artifact, error = await _execute_team_task(db, run, task, session=session)
             if error:
+                team_svc.release_task_claim(task.id, reset_status="blocked")
                 team_svc.update_task(task.id, status="blocked")
                 team_svc.update_run(run.id, status="blocked")
                 team_svc.create_activity(
                     team_run_id=run.id,
                     task_id=task.id,
                     event_type="task_blocked",
-                    actor_handle=task.owner_handle,
-                    summary=f"{task.owner_handle}가 '{task.title}' 작업 중 오류로 중단되었습니다: {error}",
+                    actor_handle=session.handle,
+                    summary=f"{session.handle} 세션이 '{task.title}' 작업 중 오류로 중단되었습니다: {error}",
+                )
+                _create_team_inbox_message(
+                    team_svc,
+                    run,
+                    from_handle=session.handle,
+                    to_handle="planner",
+                    related_task_id=task.id,
+                    message_type="task_status",
+                    subject="작업 차단",
+                    content=f"'{task.title}' 작업이 오류로 차단되었습니다: {error}",
                 )
                 db.commit()
                 return team_svc.get_run(team_run_id)
 
+            team_svc.release_task_claim(task.id, reset_status="done")
             completed = team_svc.update_task(task.id, status="done")
-            summary = f"{task.owner_handle}가 '{task.title}' 작업을 완료했습니다."
+            summary = f"{session.handle} 세션이 '{task.title}' 작업을 완료했습니다."
             if artifact and artifact.artifact_type == "review_notes":
-                summary = f"{task.owner_handle}가 '{task.title}' 검토를 완료했습니다."
+                summary = f"{session.handle} 세션이 '{task.title}' 검토를 완료했습니다."
             if artifact and artifact.artifact_type == "final":
-                summary = f"{task.owner_handle}가 최종 결과물을 정리했습니다."
+                summary = f"{session.handle} 세션이 최종 결과물을 정리했습니다."
             team_svc.create_activity(
                 team_run_id=run.id,
                 task_id=task.id,
                 event_type="final_published" if artifact and artifact.artifact_type == "final" else "task_completed",
-                actor_handle=task.owner_handle,
+                actor_handle=session.handle,
                 summary=summary,
                 payload={"artifact_id": str(artifact.id)} if artifact else None,
             )
             if completed:
                 db.commit()
+            await _maybe_auto_review_task(db, run, task, artifact)
 
     run = team_svc.get_run(team_run_id)
     if not run:
         return None
-    _refresh_team_run_status(team_svc, run.id)
+    _refresh_team_run_status(db, team_svc, run.id)
     db.commit()
     return team_svc.get_run(team_run_id)
 
 
-def _refresh_team_run_status(team_svc: TeamRunService, team_run_id: uuid.UUID) -> None:
+def _refresh_team_run_status(db: Session, team_svc: TeamRunService, team_run_id: uuid.UUID) -> None:
     run = team_svc.get_run(team_run_id)
     if not run:
         return
+    if run.plan_status == "awaiting_approval":
+        team_svc.update_run(run.id, status="awaiting_plan_approval")
+        return
+    if run.plan_status == "rejected":
+        team_svc.update_run(run.id, status="blocked")
+        return
     tasks = team_svc.list_tasks(run.id)
+    conv_svc = ConversationService(db)
+    artifacts = (
+        list(reversed(conv_svc.list_artifacts(run.conversation_id, limit=120)))
+        if run.conversation_id
+        else []
+    )
+    artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]] = {}
+    for artifact in artifacts:
+        if artifact.task_id:
+            artifacts_by_task.setdefault(str(artifact.task_id), []).append(artifact)
+    activity = team_svc.list_activity(run.id, limit=240)
+    activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]] = {}
+    for event in activity:
+        if event.task_id:
+            activity_by_task.setdefault(str(event.task_id), []).append(event)
+    ready = _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task)
+    if run.status == "done_with_risks":
+        return
     if tasks and all(task.status == "done" for task in tasks):
         team_svc.update_run(run.id, status="done")
     elif any(task.status == "blocked" for task in tasks):
         team_svc.update_run(run.id, status="blocked")
+    elif run.oversight_mode == "manual" and any(
+        _review_snapshot(
+            task,
+            artifacts_by_task.get(str(task.id), []),
+            activity_by_task.get(str(task.id), []),
+        )["review_state"] == "reviewed"
+        for task in tasks
+        if _is_review_gate_task(task)
+    ) and not ready:
+        team_svc.update_run(run.id, status="awaiting_review")
     else:
         team_svc.update_run(run.id, status="active")
 
@@ -2235,10 +4269,6 @@ def _creates_dependency_cycle(
     return False
 
 
-def _task_is_ready(team_svc: TeamRunService, run_id: uuid.UUID, task_id: uuid.UUID) -> bool:
-    return any(task.id == task_id for task in team_svc.ready_tasks(run_id))
-
-
 def _task_has_review_notes(
     db: Session,
     run: conversation_models.TeamRunModel,
@@ -2252,6 +4282,28 @@ def _task_has_review_notes(
         artifact.task_id == task_id and artifact.artifact_type == "review_notes"
         for artifact in artifacts
     )
+
+
+def _task_is_ready(team_svc: TeamRunService, run_id: uuid.UUID, task_id: uuid.UUID, db: Session) -> bool:
+    run = team_svc.get_run(run_id)
+    if not run:
+        return False
+    conv_svc = ConversationService(db)
+    artifacts = (
+        list(reversed(conv_svc.list_artifacts(run.conversation_id, limit=120)))
+        if run.conversation_id
+        else []
+    )
+    artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]] = {}
+    for artifact in artifacts:
+        if artifact.task_id:
+            artifacts_by_task.setdefault(str(artifact.task_id), []).append(artifact)
+    activity = team_svc.list_activity(run.id, limit=240)
+    activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]] = {}
+    for event in activity:
+        if event.task_id:
+            activity_by_task.setdefault(str(event.task_id), []).append(event)
+    return any(task.id == task_id for task in _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task))
 
 
 def _reset_team_task_branch(
@@ -2281,11 +4333,33 @@ def _reset_team_task_branch(
         task = tasks_by_id.get(current_id)
         if not task:
             continue
-        updated = team_svc.update_task(current_id, status="todo")
+        if task.claim_status == "claimed":
+            team_svc.release_task_claim(current_id, reset_status="open")
+        updated = team_svc.update_task(current_id, status="todo", claim_status="open")
         if updated:
             reopened.append(updated)
     reopened.sort(key=lambda item: (item.priority, item.created_at))
     return reopened
+
+
+def _supersede_reopened_task_artifacts(
+    db: Session,
+    *,
+    run: conversation_models.TeamRunModel,
+    tasks: list[conversation_models.TeamTaskModel],
+) -> None:
+    if not run.conversation_id or not tasks:
+        return
+    task_ids = [task.id for task in tasks]
+    (
+        db.query(conversation_models.ConversationArtifactModel)
+        .filter(
+            conversation_models.ConversationArtifactModel.conversation_id == run.conversation_id,
+            conversation_models.ConversationArtifactModel.task_id.in_(task_ids),
+            conversation_models.ConversationArtifactModel.status.in_(("active", "final")),
+        )
+        .update({"status": "superseded"}, synchronize_session=False)
+    )
 
 
 def _reopen_review_branch(
