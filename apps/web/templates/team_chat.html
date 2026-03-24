@@ -208,6 +208,8 @@
             <button id="rerunTaskBtn">재실행</button>
             <button id="blockTaskBtn">차단</button>
             <button id="unblockTaskBtn">차단 해제</button>
+            <button id="approveReviewBtn">검토 승인</button>
+            <button id="rejectReviewBtn">검토 반려</button>
           </div>
         </div>
         <div class="task-detail-grid">
@@ -266,6 +268,8 @@
     const rerunTaskBtnEl = document.getElementById('rerunTaskBtn');
     const blockTaskBtnEl = document.getElementById('blockTaskBtn');
     const unblockTaskBtnEl = document.getElementById('unblockTaskBtn');
+    const approveReviewBtnEl = document.getElementById('approveReviewBtn');
+    const rejectReviewBtnEl = document.getElementById('rejectReviewBtn');
     let selectedTaskId = null;
     let currentBoardTasks = [];
     let currentTaskDetail = null;
@@ -408,6 +412,8 @@
     }
 
     function reviewStateLabel(task){
+      if(task.review_state === 'approved') return '승인됨';
+      if(task.review_state === 'rejected') return '반려됨';
       if(task.review_state === 'reviewed') return '검토 완료';
       if(task.review_state === 'required') return '검토 필요';
       return '';
@@ -463,6 +469,8 @@
         rerunTaskBtnEl.disabled = true;
         blockTaskBtnEl.disabled = true;
         unblockTaskBtnEl.disabled = true;
+        approveReviewBtnEl.disabled = true;
+        rejectReviewBtnEl.disabled = true;
         return;
       }
       const task = payload.task;
@@ -478,6 +486,7 @@
       taskDetailMetaEl.textContent = meta.join(' · ');
       taskDetailDescriptionEl.textContent = task.description || '-';
       const owners = Array.from(new Set((payload.run?.selected_agents || []).filter(Boolean)));
+      const reviewable = ['reviewed', 'approved', 'rejected'].includes(task.review_state) || task.latest_artifact_type === 'review_notes';
       taskOwnerSelectEl.innerHTML = owners.map(handle => {
         const selected = handle === task.owner_handle ? 'selected' : '';
         return `<option value="${esc(handle)}" ${selected}>${esc(handleLabel(handle))}</option>`;
@@ -487,6 +496,8 @@
       rerunTaskBtnEl.disabled = false;
       blockTaskBtnEl.disabled = task.status === 'blocked';
       unblockTaskBtnEl.disabled = task.status !== 'blocked';
+      approveReviewBtnEl.disabled = !reviewable;
+      rejectReviewBtnEl.disabled = !reviewable;
       taskDetailDependenciesEl.innerHTML = (payload.dependencies || []).map(dep => {
         return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(dep.title)}</div><div class="task-meta">${esc(handleLabel(dep.owner_handle))} · ${esc(dep.status)} · ${esc(dep.artifact_goal || '-')}</div></div>`;
       }).join('') || '<div class="task-empty">선행 작업 없음</div>';
@@ -699,6 +710,14 @@
     unblockTaskBtnEl.addEventListener('click', () => {
       if(!currentTaskDetail?.task) return;
       updateSelectedTask({action: 'unblock', actor_handle: 'planner'}).catch(err => alert(err.message));
+    });
+    approveReviewBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({action: 'approve_review', actor_handle: 'manager'}).catch(err => alert(err.message));
+    });
+    rejectReviewBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({action: 'reject_review', actor_handle: 'manager'}).catch(err => alert(err.message));
     });
     document.getElementById('copyDeliverable').addEventListener('click', async () => {
       const text = deliverableBodyEl.textContent || '';

@@ -308,6 +308,46 @@ def test_team_run_task_reassignment_records_activity(client):
     assert any(event["event_type"] == "task_assigned" for event in payload["activity"])
 
 
+def test_team_run_review_actions_update_state_and_rerun_branch(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Review Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "시장 동향 브리프를 작성해줘", "sender_name": "ceo"},
+    )
+    board = planned.json()
+    critic_task = next(task for task in board["tasks"] if task["owner_handle"] == "critic")
+    final_before = board["deliverable"]["version"]
+
+    approved = client.patch(
+        f"/web/tasks/{critic_task['id']}",
+        json={"action": "approve_review", "actor_handle": "manager"},
+    )
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+    approved_task = next(item for item in approved_payload["tasks"] if item["id"] == critic_task["id"])
+    assert approved_task["review_state"] == "approved"
+    assert any(event["event_type"] == "review_approved" for event in approved_payload["activity"])
+
+    rejected = client.patch(
+        f"/web/tasks/{critic_task['id']}",
+        json={"action": "reject_review", "actor_handle": "manager"},
+    )
+    assert rejected.status_code == 200
+    rejected_payload = rejected.json()
+    rejected_task = next(item for item in rejected_payload["tasks"] if item["id"] == critic_task["id"])
+    assert rejected_task["review_state"] == "rejected"
+    assert rejected_payload["deliverable"]["version"] > final_before
+    assert any(event["event_type"] == "review_rejected" for event in rejected_payload["activity"])
+
+
 @dataclass
 class _FakeBot:
     username: str

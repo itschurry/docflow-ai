@@ -1203,6 +1203,50 @@ async def update_web_team_task(
             raise HTTPException(status_code=500, detail="Failed to refresh team run")
         return _build_team_board_snapshot(db, refreshed_run)
 
+    if action in {"approve_review", "reject_review"}:
+        if not _task_has_review_notes(db, run, updated.id):
+            raise HTTPException(status_code=400, detail="Task does not have review notes")
+
+        if action == "approve_review":
+            team_svc.create_activity(
+                team_run_id=updated.team_run_id,
+                task_id=updated.id,
+                event_type="review_approved",
+                actor_handle=actor_handle,
+                target_handle=updated.owner_handle,
+                summary=f"{actor_handle}가 '{updated.title}' 검토를 승인했습니다.",
+            )
+            db.commit()
+            refreshed_run = team_svc.get_run(updated.team_run_id)
+            if not refreshed_run:
+                raise HTTPException(status_code=500, detail="Failed to refresh team run")
+            return _build_team_board_snapshot(db, refreshed_run)
+
+        reopened = _reopen_review_branch(
+            team_svc=team_svc,
+            run_id=run.id,
+            review_task_id=updated.id,
+        )
+        team_svc.create_activity(
+            team_run_id=updated.team_run_id,
+            task_id=updated.id,
+            event_type="review_rejected",
+            actor_handle=actor_handle,
+            target_handle=updated.owner_handle,
+            summary=(
+                f"{actor_handle}가 '{updated.title}' 검토를 반려했고 "
+                f"재작업 대상 {len(reopened)}개를 다시 열었습니다."
+            ),
+            payload={"reopened_task_ids": [str(item.id) for item in reopened]},
+        )
+        team_svc.update_run(updated.team_run_id, status="active")
+        db.commit()
+        await _run_team_scheduler(db, updated.team_run_id)
+        refreshed_run = team_svc.get_run(updated.team_run_id)
+        if not refreshed_run:
+            raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        return _build_team_board_snapshot(db, refreshed_run)
+
     event_type = {
         "in_progress": "task_started",
         "blocked": "task_blocked",
@@ -1559,6 +1603,14 @@ def _serialize_team_task_snapshot(
     latest_artifact = task_artifacts[-1] if task_artifacts else None
     latest_event = task_events[-1] if task_events else None
     has_review_notes = any(artifact.artifact_type == "review_notes" for artifact in task_artifacts)
+    latest_review_event = next(
+        (
+            event
+            for event in reversed(task_events)
+            if event.event_type in {"review_approved", "review_rejected"}
+        ),
+        None,
+    )
 
     item["depends_on_task_ids"] = dep_ids
     item["depends_on_titles"] = [
@@ -1573,7 +1625,11 @@ def _serialize_team_task_snapshot(
     item["latest_activity_type"] = latest_event.event_type if latest_event else None
     item["latest_activity_at"] = latest_event.created_at.isoformat() if latest_event else None
     item["has_review_notes"] = has_review_notes
-    if has_review_notes:
+    if latest_review_event and latest_review_event.event_type == "review_approved":
+        item["review_state"] = "approved"
+    elif latest_review_event and latest_review_event.event_type == "review_rejected":
+        item["review_state"] = "rejected"
+    elif has_review_notes:
         item["review_state"] = "reviewed"
     elif task.review_required:
         item["review_state"] = "required"
@@ -1906,6 +1962,21 @@ def _refresh_team_run_status(team_svc: TeamRunService, team_run_id: uuid.UUID) -
         team_svc.update_run(run.id, status="active")
 
 
+def _task_has_review_notes(
+    db: Session,
+    run: conversation_models.TeamRunModel,
+    task_id: uuid.UUID,
+) -> bool:
+    if not run.conversation_id:
+        return False
+    conv_svc = ConversationService(db)
+    artifacts = conv_svc.list_artifacts(run.conversation_id, limit=120)
+    return any(
+        artifact.task_id == task_id and artifact.artifact_type == "review_notes"
+        for artifact in artifacts
+    )
+
+
 def _reset_team_task_branch(
     *,
     team_svc: TeamRunService,
@@ -1937,6 +2008,44 @@ def _reset_team_task_branch(
         if updated:
             reopened.append(updated)
     reopened.sort(key=lambda item: (item.priority, item.created_at))
+    return reopened
+
+
+def _reopen_review_branch(
+    *,
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+    review_task_id: uuid.UUID,
+) -> list[conversation_models.TeamTaskModel]:
+    dependencies = team_svc.list_dependencies(run_id)
+    upstream_ids = [
+        dep.depends_on_task_id
+        for dep in dependencies
+        if dep.team_task_id == review_task_id
+    ]
+    upstream_tasks = [team_svc.get_task(task_id) for task_id in upstream_ids]
+    targets = [
+        task
+        for task in upstream_tasks
+        if task and task.artifact_goal != "brief"
+    ]
+    if not targets:
+        review_task = team_svc.get_task(review_task_id)
+        targets = [review_task] if review_task else []
+
+    reopened_by_id: dict[uuid.UUID, conversation_models.TeamTaskModel] = {}
+    for target in targets:
+        for item in _reset_team_task_branch(
+            team_svc=team_svc,
+            run_id=run_id,
+            task_id=target.id,
+            include_descendants=True,
+        ):
+            reopened_by_id[item.id] = item
+    reopened = sorted(
+        reopened_by_id.values(),
+        key=lambda item: (item.priority, item.created_at),
+    )
     return reopened
 
 
