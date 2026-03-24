@@ -126,7 +126,11 @@ class BaseAgent(ABC):
         try:
             text = (await self._provider.generate_text(full_prompt)).strip()
         except Exception as exc:
-            if self._fallback_provider and _is_retryable_provider_error(exc):
+            allow_provider_fallback = (
+                _is_retryable_provider_error(exc)
+                or (self.config.provider == "anthropic" and _is_anthropic_provider_error(exc))
+            )
+            if self._fallback_provider and allow_provider_fallback:
                 text = (await self._fallback_provider.generate_text(full_prompt)).strip()
                 provider_used = self._fallback_provider_name or "openai"
                 model_used = self._fallback_provider_model or settings.openai_model
@@ -185,6 +189,12 @@ def _is_retryable_provider_error(exc: Exception) -> bool:
         "rate limit",
         "too many requests",
         "quota",
+        "insufficient quota",
+        "insufficient_quota",
+        "credit balance",
+        "billing",
+        "usage limit",
+        "resource exhausted",
         "overloaded",
         "temporar",
         "timeout",
@@ -195,6 +205,17 @@ def _is_retryable_provider_error(exc: Exception) -> bool:
         "429",
     )
     return any(token in lowered for token in retryable_tokens)
+
+
+def _is_anthropic_provider_error(exc: Exception) -> bool:
+    module_name = str(getattr(exc.__class__, "__module__", "")).lower()
+    class_name = str(getattr(exc.__class__, "__name__", "")).lower()
+    if "anthropic" in module_name:
+        return True
+    if "anthropic" in class_name:
+        return True
+    lowered = str(exc).lower()
+    return "anthropic" in lowered or "claude" in lowered
 
 
 def _parse_agent_payload(text: str) -> dict[str, Any]:

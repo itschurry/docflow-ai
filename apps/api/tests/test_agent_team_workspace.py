@@ -1327,6 +1327,65 @@ def test_export_falls_back_to_openai_ir_when_claude_unavailable(client, monkeypa
     assert "openai_ir" in payload["provider_chain"]
 
 
+def test_export_uses_openai_fallback_even_when_claude_fallback_flag_disabled(client, monkeypatch):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "OpenAI Fallback Flag Off Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "oversight_mode": "auto",
+            "output_type": "docx",
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "청계천 역사 요약 보고서를 작성해줘", "sender_name": "ceo"},
+    )
+    assert planned.status_code == 202
+
+    import app.api.routes as routes
+
+    class _FailClaude:
+        def generate(self, **kwargs):
+            raise RuntimeError("Anthropic credit balance is too low")
+
+    class _DummyOpenAIGen:
+        def generate_ir(self, **kwargs):
+            return {
+                "document_type": "document",
+                "title": "OpenAI Fallback Doc",
+                "sections": [
+                    {
+                        "heading": "요약",
+                        "level": 1,
+                        "blocks": [{"type": "paragraph", "text": "폴백으로 생성된 문서입니다."}],
+                    }
+                ],
+                "tables": [],
+                "sources": [],
+                "notes": [],
+                "metadata": {},
+            }
+
+    monkeypatch.setattr(routes, "anthropic_skills_available", lambda: True)
+    monkeypatch.setattr(routes, "AnthropicSkillsDocumentGenerator", lambda: _FailClaude())
+    monkeypatch.setattr(routes, "openai_document_generation_available", lambda: True)
+    monkeypatch.setattr(routes, "OpenAIDocumentIRGenerator", lambda: _DummyOpenAIGen())
+    monkeypatch.setattr(routes.settings, "anthropic_skills_allow_fallback", False)
+
+    exported = client.post(
+        f"/web/team-runs/{run_id}/exports",
+        json={"format": "docx"},
+    )
+    assert exported.status_code == 200
+    payload = exported.json()
+    assert payload["provider"] == "openai_ir"
+    assert "claude_skills_failed" in payload["provider_chain"]
+    assert "openai_ir" in payload["provider_chain"]
+
+
 class _RaisingProvider:
     async def generate_text(self, prompt: str) -> str:
         raise RuntimeError("429 quota exceeded")
@@ -1364,6 +1423,44 @@ def test_base_agent_falls_back_to_openai_when_retryable_error(monkeypatch):
     )
     agent = _DummyAgent(config)
     agent._provider = _RaisingProvider()
+    agent._fallback_provider = _FallbackProvider()
+    agent._fallback_provider_name = "openai"
+    agent._fallback_provider_model = "gpt-test"
+
+    result = asyncio.run(agent.run("테스트", ""))
+    assert result.fallback_used is True
+    assert result.provider == "openai"
+    assert result.model == "gpt-test"
+    assert "fallback ok" in result.text
+
+
+class _AnthropicPermissionError(Exception):
+    pass
+
+
+_AnthropicPermissionError.__module__ = "anthropic._exceptions"
+
+
+class _AnthropicFailingProvider:
+    async def generate_text(self, prompt: str) -> str:
+        raise _AnthropicPermissionError("invalid permissions for claude workspace")
+
+    async def generate_structured(self, prompt: str, schema: dict) -> dict:
+        raise _AnthropicPermissionError("invalid permissions for claude workspace")
+
+
+def test_base_agent_falls_back_to_openai_for_anthropic_api_errors(monkeypatch):
+    config = AgentConfig(
+        handle="writer",
+        display_name="writer",
+        emoji="✍️",
+        provider="anthropic",
+        model="claude-test",
+        max_tokens=1000,
+        system_prompt="test",
+    )
+    agent = _DummyAgent(config)
+    agent._provider = _AnthropicFailingProvider()
     agent._fallback_provider = _FallbackProvider()
     agent._fallback_provider_name = "openai"
     agent._fallback_provider_model = "gpt-test"

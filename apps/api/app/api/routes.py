@@ -12,7 +12,7 @@ import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -262,6 +262,7 @@ def _persist_team_export_file(
     mime_type: str,
     extracted_text: str = "",
 ) -> FileModel:
+    _ensure_files_document_columns(db)
     project = _ensure_team_export_project(db)
     output_dir = Path(settings.upload_dir) / str(project.id) / "generated" / "team_runs" / str(run.id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +287,15 @@ def _persist_team_export_file(
     db.add(file_row)
     db.flush()
     return file_row
+
+
+def _ensure_files_document_columns(db: Session) -> None:
+    rows = db.execute(text("PRAGMA table_info(files)")).all()
+    columns = {str(row[1]) for row in rows}
+    if "document_type" not in columns:
+        db.execute(text("ALTER TABLE files ADD COLUMN document_type VARCHAR(30) NOT NULL DEFAULT ''"))
+    if "document_summary" not in columns:
+        db.execute(text("ALTER TABLE files ADD COLUMN document_summary TEXT NOT NULL DEFAULT ''"))
 
 
 def _file_analysis_payload(file_row: FileModel) -> dict:
@@ -1578,7 +1588,7 @@ async def create_web_team_task(
     if _task_is_ready(team_svc, run.id, task.id, db):
         team_svc.update_run(run.id, status="active")
         db.commit()
-        await _run_team_scheduler(db, run.id)
+        background_tasks.add_task(_bg_run_scheduler, run.id)
     else:
         _refresh_team_run_status(db, team_svc, run.id)
         db.commit()
@@ -1744,7 +1754,7 @@ async def send_web_team_run_request(
         )
         team_svc.update_run(run.id, status="active", plan_status="approved")
         db.commit()
-        await _run_team_scheduler(db, run.id)
+        background_tasks.add_task(_bg_run_scheduler, run.id)
         return _build_team_board_snapshot(db, run)
 
     team_svc.update_run(
@@ -1865,7 +1875,7 @@ async def send_web_team_run_request(
         payload={"artifact_id": str(brief_artifact.id)},
     )
     db.commit()
-    await _run_team_scheduler(db, run.id)
+    background_tasks.add_task(_bg_run_scheduler, run.id)
     return _build_team_board_snapshot(db, run)
 
 
@@ -1900,7 +1910,7 @@ async def approve_web_team_run_plan(
         content="실행 계획이 승인되었습니다. 후속 작업을 진행하세요.",
     )
     db.commit()
-    await _run_team_scheduler(db, run.id)
+    background_tasks.add_task(_bg_run_scheduler, run.id)
     refreshed = team_svc.get_run(run.id)
     if not refreshed:
         raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
@@ -2068,7 +2078,7 @@ async def update_web_team_task(
         )
         team_svc.update_run(updated.team_run_id, status="active")
         db.commit()
-        await _run_team_scheduler(db, updated.team_run_id)
+        background_tasks.add_task(_bg_run_scheduler, updated.team_run_id)
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
             raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
@@ -2111,7 +2121,7 @@ async def update_web_team_task(
                 )
             _refresh_team_run_status(db, team_svc, updated.team_run_id)
             db.commit()
-            await _run_team_scheduler(db, updated.team_run_id)
+            background_tasks.add_task(_bg_run_scheduler, updated.team_run_id)
             refreshed_run = team_svc.get_run(updated.team_run_id)
             if not refreshed_run:
                 raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
@@ -2150,7 +2160,7 @@ async def update_web_team_task(
         )
         team_svc.update_run(updated.team_run_id, status="active")
         db.commit()
-        await _run_team_scheduler(db, updated.team_run_id)
+        background_tasks.add_task(_bg_run_scheduler, updated.team_run_id)
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
             raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
@@ -2184,7 +2194,7 @@ async def update_web_team_task(
         if _task_is_ready(team_svc, run.id, updated.id, db):
             team_svc.update_run(updated.team_run_id, status="active")
             db.commit()
-            await _run_team_scheduler(db, updated.team_run_id)
+            background_tasks.add_task(_bg_run_scheduler, updated.team_run_id)
         else:
             _refresh_team_run_status(db, team_svc, updated.team_run_id)
             db.commit()
@@ -2279,7 +2289,7 @@ async def update_web_team_task_dependencies(
     if _task_is_ready(team_svc, run.id, task.id, db):
         team_svc.update_run(run.id, status="active")
         db.commit()
-        await _run_team_scheduler(db, run.id)
+        background_tasks.add_task(_bg_run_scheduler, run.id)
     else:
         _refresh_team_run_status(db, team_svc, run.id)
         db.commit()
@@ -2763,7 +2773,8 @@ def export_web_team_run_deliverable(
         except Exception as exc:
             provider_chain.append("claude_skills_failed")
             last_provider_error = exc
-            if not settings.anthropic_skills_allow_fallback:
+            allow_fallback = settings.anthropic_skills_allow_fallback or openai_document_generation_available()
+            if not allow_fallback:
                 raise _provider_error_http_exception(stage="claude_skills_export", exc=exc)
             generated_provider = "internal_fallback"
         else:
