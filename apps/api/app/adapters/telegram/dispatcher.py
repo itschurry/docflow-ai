@@ -49,6 +49,7 @@ class BotDispatcher:
         role: str,
         body: str,
         next_role: str | None = None,
+        include_handoff_hint: bool = True,
     ) -> str:
         """Format agent message body with optional @next_bot mention appended."""
         identity = self.resolve_identity(role)
@@ -60,7 +61,7 @@ class BotDispatcher:
         escaped_body = _escape_html(body)
         parts = [f"{header}\n{escaped_body}"]
 
-        if next_role:
+        if next_role and include_handoff_hint:
             next_identity = self.resolve_identity(next_role)
             next_username = self._registry.username_for(next_identity)
             parts.append(f"\n{next_username} 다음 이어서 진행해줘.")
@@ -73,12 +74,13 @@ class BotDispatcher:
         chat_id: str | int,
         body: str,
         next_role: str | None = None,
+        include_handoff_hint: bool = True,
         reply_to_message_id: int | None = None,
         message_thread_id: int | None = None,
     ) -> DispatchResult:
         """Format + send via the correct bot identity. Returns DispatchResult."""
         identity = self.resolve_identity(role)
-        rendered = self.build_message(role, body, next_role)
+        rendered = self.build_message(role, body, next_role, include_handoff_hint=include_handoff_hint)
         tg_msg_id = await self._outbound.send_message_as(
             identity=identity,
             chat_id=chat_id,

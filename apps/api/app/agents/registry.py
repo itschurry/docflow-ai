@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 import yaml
@@ -39,12 +40,19 @@ def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
     for handle, cfg in raw.get("agents", {}).items():
         if not cfg.get("enabled", True):
             continue
+        provider = _resolve_env(str(cfg.get("provider", "stub"))).strip().lower()
+        model = _resolve_env(str(cfg.get("model", ""))).strip()
+        if not model:
+            if provider == "openai":
+                model = os.environ.get("OPENAI_MODEL", "")
+            elif provider == "anthropic":
+                model = os.environ.get("ANTHROPIC_MODEL", "")
         agent_cfg = AgentConfig(
             handle=handle,
             display_name=cfg.get("display_name", handle.capitalize()),
             emoji=cfg.get("emoji", "🤖"),
-            provider=cfg.get("provider", "stub"),
-            model=cfg.get("model", ""),
+            provider=provider,
+            model=model,
             max_tokens=cfg.get("max_tokens", 1500),
             system_prompt=cfg.get("system_prompt", "").strip(),
             enabled=cfg.get("enabled", True),
@@ -53,3 +61,10 @@ def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
         if factory:
             agents[handle] = factory(agent_cfg)
     return agents
+
+
+def _resolve_env(value: str) -> str:
+    """Replace ${VAR_NAME} with environment variable value."""
+    def replacer(m: re.Match) -> str:
+        return os.environ.get(m.group(1), "")
+    return re.sub(r"\$\{([^}]+)\}", replacer, value)

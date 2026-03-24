@@ -5,6 +5,7 @@ import logging
 import uuid
 
 from sqlalchemy.orm import Session
+import yaml
 
 from app.adapters.telegram.bot import bot
 from app.adapters.telegram.formatter import (
@@ -14,6 +15,7 @@ from app.adapters.telegram.formatter import (
 )
 from app.conversations.service import ConversationService
 from app.conversations.serializer import serialize_conversation
+from app.core.config import settings
 from app.orchestrator.engine import orchestrator
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,9 @@ async def handle_agents(chat_id: str, db: Session, **_) -> None:
 async def handle_mode(chat_id: str, text: str, db: Session, **_) -> None:
     parts = text.strip().split(maxsplit=1)
     mode = parts[1].strip().lower() if len(parts) > 1 else ""
-    valid = {"pipeline", "debate", "artifact", "direct"}
+    alias = {"pipeline": "guided"}
+    mode = alias.get(mode, mode)
+    valid = {"guided", "autonomous-lite", "autonomous", "debate", "artifact", "direct"}
     if mode not in valid:
         await bot.send_message(
             chat_id,
@@ -63,18 +67,18 @@ async def handle_stop(chat_id: str, db: Session, **_) -> None:
 
 
 async def handle_help(chat_id: str, **_) -> None:
-    await bot.send_message(chat_id, help_text())
+    await bot.send_message(chat_id, help_text(_load_help_mentions()))
 
 
 async def handle_final(chat_id: str, db: Session, **_) -> None:
-    from app.conversations.selectors import get_recent_agent_output
+    from app.conversations.selectors import get_recent_agent_output_since_last_user
     svc = ConversationService(db)
     conv = svc.get_or_create_conversation(chat_id=chat_id)
-    output = get_recent_agent_output(db, conv.id, "manager")
+    output = get_recent_agent_output_since_last_user(db, conv.id, "manager")
     if output:
         await bot.send_message(chat_id, f"🎯 <b>최종 결론</b>\n\n{output}")
     else:
-        await bot.send_message(chat_id, "아직 완료된 manager 출력이 없습니다.")
+        await bot.send_message(chat_id, "최근 요청 기준으로 완료된 manager 출력이 없습니다.")
 
 
 async def handle_export(chat_id: str, text: str, db: Session, **_) -> None:
@@ -93,6 +97,13 @@ async def handle_export(chat_id: str, text: str, db: Session, **_) -> None:
     )
 
 
+async def handle_new(chat_id: str, db: Session, **_) -> None:
+    svc = ConversationService(db)
+    closed = svc.close_active_conversations(chat_id=chat_id)
+    db.commit()
+    await bot.send_message(chat_id, f"🧹 새 대화를 시작합니다. 이전 활성 대화 {closed}개를 종료했어요.")
+
+
 _COMMAND_HANDLERS = {
     "/agents": handle_agents,
     "/mode": handle_mode,
@@ -102,7 +113,43 @@ _COMMAND_HANDLERS = {
     "/start": handle_help,
     "/final": handle_final,
     "/export": handle_export,
+    "/new": handle_new,
 }
+
+
+def _load_help_mentions() -> dict[str, str]:
+    """Build mention examples from configured telegram usernames."""
+    handles = ("planner", "writer", "critic", "coder")
+    dispatcher = orchestrator._get_dispatcher()
+    mapping: dict[str, str] = {}
+
+    try:
+        with open(settings.agent_config_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        agent_cfg = raw.get("agents", {}) or {}
+        bots_cfg = (raw.get("telegram", {}) or {}).get("bots", {}) or {}
+
+        for handle in handles:
+            identity = (
+                (agent_cfg.get(handle, {}) or {}).get("identity")
+                or dispatcher.resolve_identity(handle)
+            )
+            username = (bots_cfg.get(identity, {}) or {}).get("username")
+            if username:
+                mapping[handle] = f"@{str(username).lstrip('@')}"
+    except Exception as exc:
+        logger.debug("Failed to load help mentions from config: %s", exc)
+
+    # Fallback to runtime registry values if not in YAML-derived mapping.
+    for handle in handles:
+        if handle in mapping:
+            continue
+        identity = dispatcher.resolve_identity(handle)
+        bot_info = dispatcher._registry.get(identity)
+        if bot_info and bot_info.username:
+            mapping[handle] = f"@{bot_info.username.lstrip('@')}"
+
+    return mapping
 
 
 async def dispatch_command(

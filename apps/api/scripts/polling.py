@@ -109,6 +109,7 @@ async def poll_bot(bot: BotIdentity) -> None:
             for update in updates:
                 offset = update["update_id"] + 1
                 logger.info("[%s] update_id=%s", bot.username, update["update_id"])
+                update["_received_by_bot_key"] = bot.key
                 db: Session = SessionLocal()
                 try:
                     await process_update(update, db)

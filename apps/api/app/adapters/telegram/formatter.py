@@ -29,13 +29,15 @@ def agents_list(agents: list[dict]) -> str:
             f"  {a['emoji']} <b>{a['display_name']}</b> "
             f"(<code>@{a['handle']}</code>) — {a['provider']}/{a['model']}"
         )
-    lines.append("\n<i>/mode pipeline|debate|artifact|direct 로 모드 변경</i>")
+    lines.append("\n<i>/mode guided|autonomous-lite|autonomous|debate|artifact|direct 로 모드 변경</i>")
     return "\n".join(lines)
 
 
 def mode_changed(mode: str) -> str:
     labels = {
-        "pipeline": "🔗 Pipeline (순차 처리)",
+        "guided": "🧭 Guided (안정형 순차 처리)",
+        "autonomous-lite": "🤝 Autonomous-lite (동적 핸드오프 + 보호장치)",
+        "autonomous": "🚀 Autonomous (동적 핸드오프)",
         "debate": "💬 Debate (토론 후 요약)",
         "artifact": "📄 Artifact (문서 생성)",
         "direct": "🎯 Direct (직접 호출)",
@@ -44,21 +46,30 @@ def mode_changed(mode: str) -> str:
     return f"✅ 모드가 <b>{label}</b>으로 변경됐습니다."
 
 
-def help_text() -> str:
+def help_text(mention_usernames: dict[str, str] | None = None) -> str:
+    usernames = mention_usernames or {}
+
+    def mention_for(handle: str) -> str:
+        raw = (usernames.get(handle) or "").strip()
+        if not raw:
+            return f"@{handle}"
+        return raw if raw.startswith("@") else f"@{raw}"
+
     return (
         "<b>DocFlow AI 도움말</b>\n\n"
         "<b>명령어</b>\n"
         "  /agents — 에이전트 목록\n"
-        "  /mode [pipeline|debate|artifact|direct] — 모드 변경\n"
+        "  /mode [guided|autonomous-lite|autonomous|debate|artifact|direct] — 모드 변경\n"
         "  /status — 현재 대화 상태\n"
+        "  /new — 새 대화 시작(기존 활성 컨텍스트 종료)\n"
         "  /stop — 작업 중단\n"
         "  /final — 현재까지 결론 요약\n"
         "  /export [md|docx|xlsx|pptx] — 결과 내보내기\n\n"
         "<b>멘션 예시</b>\n"
-        "  @planner 사업계획서 작업 분해해줘\n"
-        "  @writer 마케팅 전략 초안 작성\n"
-        "  @critic 이 주장의 허점을 찾아줘\n"
-        "  @coder 이 기능 구현 방향 알려줘\n"
+        f"  {mention_for('planner')} 사업계획서 작업 분해해줘\n"
+        f"  {mention_for('writer')} 마케팅 전략 초안 작성\n"
+        f"  {mention_for('critic')} 이 주장의 허점을 찾아줘\n"
+        f"  {mention_for('coder')} 이 기능 구현 방향 알려줘\n"
     )
 
 

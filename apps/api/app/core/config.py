@@ -1,4 +1,27 @@
 import os
+from pathlib import Path
+
+
+def _load_local_env_file() -> None:
+    """Load apps/api/.env into process env if not already set."""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_local_env_file()
 
 
 class Settings:
@@ -46,10 +69,31 @@ class Settings:
 
     # Orchestrator
     agent_config_path: str = os.getenv("AGENT_CONFIG_PATH", "./config/agents.yaml")
-    orchestrator_default_mode: str = os.getenv("ORCHESTRATOR_DEFAULT_MODE", "pipeline")
+    orchestrator_default_mode: str = os.getenv("ORCHESTRATOR_DEFAULT_MODE", "autonomous-lite")
     orchestrator_max_turns: int = int(os.getenv("ORCHESTRATOR_MAX_TURNS", "6"))
+    orchestrator_same_agent_streak_limit: int = int(
+        os.getenv("ORCHESTRATOR_SAME_AGENT_STREAK_LIMIT", "2")
+    )
+    orchestrator_recent_pattern_repeat_limit: int = int(
+        os.getenv("ORCHESTRATOR_RECENT_PATTERN_REPEAT_LIMIT", "1")
+    )
+    orchestrator_max_no_progress_handoffs: int = int(
+        os.getenv("ORCHESTRATOR_MAX_NO_PROGRESS_HANDOFFS", "2")
+    )
+    orchestrator_conversation_idle_timeout_minutes: int = int(
+        os.getenv("ORCHESTRATOR_CONVERSATION_IDLE_TIMEOUT_MINUTES", "30")
+    )
     orchestrator_auto_summary: bool = os.getenv(
         "ORCHESTRATOR_AUTO_SUMMARY", "true").lower() == "true"
+    telegram_send_cooldown_seconds: float = float(
+        os.getenv("TELEGRAM_SEND_COOLDOWN_SECONDS", "0.35")
+    )
+    telegram_identity_burst_limit: int = int(
+        os.getenv("TELEGRAM_IDENTITY_BURST_LIMIT", "3")
+    )
+    telegram_identity_burst_window_seconds: float = float(
+        os.getenv("TELEGRAM_IDENTITY_BURST_WINDOW_SECONDS", "2.0")
+    )
 
 
 settings = Settings()

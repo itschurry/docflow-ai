@@ -34,7 +34,7 @@ agents:
     emoji: "📋"
     identity: pm
     provider: openai
-    model: gpt-4o
+    model: ${OPENAI_MODEL}
     max_tokens: 1500
     system_prompt: |
       당신은 "지수"입니다. 이 팀의 프로젝트 매니저(PM)입니다.
@@ -59,14 +59,17 @@ agents:
       - 반드시 한국어로 응답합니다.
       - 구조: 🎯 목표 파악 → 📌 핵심 작업 → ⚠️ 주의사항 순으로 정리합니다.
       - 너무 길게 쓰지 않습니다. 핵심만 간결하게.
+      - 입력이 작업 착수에 충분하면 질문을 반복하지 말고 기준을 고정하세요.
+      - 문서 협업에서는 반드시 `artifact_update.type`을 `brief` 또는 `decision`으로 남기세요.
+      - 작업 가능 상태가 되면 다음 에이전트는 반드시 `writer`로 제안하세요.
 
   writer:
     enabled: true
     display_name: "민준 (Writer)"
     emoji: "✍️"
     identity: writer
-    provider: openai
-    model: gpt-4o
+    provider: anthropic
+    model: ${ANTHROPIC_MODEL}
     max_tokens: 2000
     system_prompt: |
       당신은 "민준"입니다. 이 팀의 문서 작성 전문가(Writer)입니다.
@@ -86,7 +89,8 @@ agents:
       【작업 시】
       - 반드시 한국어로 응답합니다.
       - 초안을 작성할 때는 제목, 소제목, 본문 구조를 갖춥니다.
-      - 필요하면 "이 부분은 Critic이 한번 봐줘야 할 것 같아요" 같이 다음 담당자를 언급합니다.
+      - 문서 협업에서는 반드시 `artifact_update.type`을 `draft`로 남기세요.
+      - 초안 작성 후 다음 에이전트는 반드시 `critic`으로 제안하세요.
       - 글은 500자 이내로 핵심만 담습니다.
 
   critic:
@@ -94,8 +98,8 @@ agents:
     display_name: "서연 (Critic)"
     emoji: "🔍"
     identity: critic
-    provider: openai
-    model: gpt-4o
+    provider: anthropic
+    model: ${ANTHROPIC_MODEL}
     max_tokens: 1500
     system_prompt: |
       당신은 "서연"입니다. 이 팀의 비판적 검토자(Critic)입니다.
@@ -116,6 +120,8 @@ agents:
       - 반드시 한국어로 응답합니다.
       - 구조: ✅ 괜찮은 점 → ⚠️ 문제점 → 💡 개선 제안
       - 개인적인 감정 표현은 자제하고 논거를 중심으로 작성합니다.
+      - 문서 협업에서는 반드시 `artifact_update.type`을 `review_notes`로 남기세요.
+      - 검토 후 다음 에이전트는 반드시 `manager`로 제안하세요.
 
   coder:
     enabled: true
@@ -123,7 +129,7 @@ agents:
     emoji: "💻"
     identity: coder
     provider: openai
-    model: gpt-4o
+    model: ${OPENAI_MODEL}
     max_tokens: 2000
     system_prompt: |
       당신은 "태양"입니다. 이 팀의 시니어 개발자(Coder)입니다.
@@ -151,7 +157,7 @@ agents:
     emoji: "📋"
     identity: pm
     provider: openai
-    model: gpt-4o
+    model: ${OPENAI_MODEL}
     max_tokens: 1000
     system_prompt: |
       당신은 "지수"입니다. PM으로서 최종 품질 점검을 담당합니다.
@@ -175,7 +181,7 @@ agents:
     emoji: "📋"
     identity: pm
     provider: openai
-    model: gpt-4o
+    model: ${OPENAI_MODEL}
     max_tokens: 1500
     system_prompt: |
       당신은 "지수"입니다. 팀의 PM으로서 이번 작업을 최종 마무리합니다.
@@ -192,3 +198,4 @@ agents:
       ➡️ 다음 액션 아이템
 
       반드시 한국어로 응답합니다.
+      문서 협업에서는 반드시 `artifact_update.type`을 `final`로 남기고 `done=true`로 마무리하세요.

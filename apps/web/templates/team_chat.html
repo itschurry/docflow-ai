@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocFlow Agent Team Workspace</title>
+  <style>
+    :root {
+      --bg: #080b13;
+      --panel: #0f1320;
+      --panel2: #11182a;
+      --line: #232c42;
+      --text: #e9edf7;
+      --muted: #97a3bd;
+      --chip: #1b2338;
+      --user: #1a3552;
+      --agent: #192534;
+      --planner: #24365a;
+      --writer: #204238;
+      --critic: #4a2532;
+      --coder: #2f2957;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    .layout { display:grid; grid-template-columns: 290px 1fr; min-height:100vh; }
+    .side { border-right:1px solid var(--line); background:linear-gradient(180deg,#0d1220,#0a0f1a); padding:14px; }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:700; margin-bottom:14px; }
+    .dot { width:24px; height:24px; border-radius:8px; background:linear-gradient(135deg,#74b0ff,#9e6dff); }
+    .card { border:1px solid var(--line); background:var(--panel); border-radius:12px; padding:10px; margin-bottom:10px; }
+    .row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .mini { font-size:12px; color:var(--muted); }
+    .agents { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+    .agent-chip { border:1px solid var(--line); background:var(--chip); border-radius:999px; padding:5px 10px; font-size:12px; }
+    .agent-chip input { margin-right:6px; }
+    .main { display:flex; flex-direction:column; min-height:100vh; }
+    .top { border-bottom:1px solid var(--line); padding:12px 16px; display:flex; justify-content:space-between; align-items:center; background:#0b1020; }
+    .title { font-weight:700; }
+    .live { display:flex; gap:6px; flex-wrap:wrap; }
+    .live .agent-chip { background:#141d30; }
+    .chat { flex:1; overflow:auto; padding:16px; background:radial-gradient(800px 500px at 50% -20%, #152038 0%, #090d18 55%, #080b13 100%); }
+    .deliverable-box {
+      margin: 10px 16px 0 16px;
+      border:1px solid #32507c;
+      background:linear-gradient(180deg,#13253f,#101f35);
+      border-radius:12px;
+      padding:10px 12px;
+    }
+    .deliverable-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); margin-bottom:6px; }
+    .deliverable-body { white-space:pre-wrap; line-height:1.45; max-height:220px; overflow:auto; }
+    .progress-box {
+      margin: 10px 16px 0 16px;
+      border:1px solid #395240;
+      background:linear-gradient(180deg,#132119,#101a15);
+      border-radius:12px;
+      padding:10px 12px;
+    }
+    .progress-head { font-size:12px; color:var(--muted); margin-bottom:8px; }
+    .progress-list { display:grid; gap:8px; }
+    .progress-step {
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:#0d1522;
+      padding:10px 12px;
+    }
+    .progress-line { font-size:14px; line-height:1.4; }
+    .progress-meta { font-size:12px; color:var(--muted); margin-top:4px; }
+    .board-box {
+      margin: 10px 16px 0 16px;
+      border:1px solid #5d4a24;
+      background:linear-gradient(180deg,#211912,#1a1510);
+      border-radius:12px;
+      padding:10px 12px;
+    }
+    .board-head { font-size:12px; color:var(--muted); margin-bottom:8px; }
+    .board-columns { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); }
+    .board-col { border:1px solid var(--line); border-radius:10px; background:#0d1522; padding:10px; }
+    .board-col h4 { margin:0 0 8px 0; font-size:13px; }
+    .task-card { border:1px solid #2a3348; border-radius:10px; background:#101826; padding:8px 10px; margin-bottom:8px; cursor:pointer; transition:transform .12s ease, border-color .12s ease, background .12s ease; }
+    .task-card:hover { transform:translateY(-1px); border-color:#4d648b; background:#122034; }
+    .task-card.active { border-color:#7aa2ff; background:#15243d; box-shadow:0 0 0 1px rgba(122,162,255,.25) inset; }
+    .task-card:last-child { margin-bottom:0; }
+    .task-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+    .task-meta { font-size:12px; color:var(--muted); }
+    .task-flags { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .task-badge { font-size:11px; padding:2px 7px; border-radius:999px; border:1px solid #36415c; color:#cbd5ea; background:#171f31; }
+    .task-badge.review { border-color:#7f5663; background:#2a1820; color:#ffced8; }
+    .task-badge.ready { border-color:#4c7c61; background:#13261b; color:#c4f2d1; }
+    .task-badge.artifact { border-color:#4b628d; background:#142036; color:#cddcff; }
+    .task-detail-box {
+      margin: 10px 16px 0 16px;
+      border:1px solid #314365;
+      background:linear-gradient(180deg,#101a2e,#0d1424);
+      border-radius:12px;
+      padding:10px 12px;
+    }
+    .task-detail-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+    .task-detail-title { font-size:15px; font-weight:700; }
+    .task-detail-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .task-detail-actions select,
+    .task-detail-actions button { font-size:12px; padding:8px 10px; }
+    .task-detail-grid { display:grid; grid-template-columns:1.3fr .9fr; gap:12px; }
+    .task-detail-card { border:1px solid var(--line); border-radius:10px; background:#0d1522; padding:10px; }
+    .task-detail-card b { display:block; margin-bottom:6px; font-size:12px; color:var(--muted); }
+    .task-detail-body { white-space:pre-wrap; line-height:1.45; font-size:13px; }
+    .task-detail-list { display:grid; gap:8px; }
+    .task-detail-item { border:1px solid #263049; border-radius:10px; background:#101826; padding:8px 10px; }
+    .task-detail-item-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+    .task-empty { font-size:12px; color:var(--muted); }
+    @media (max-width: 1100px) {
+      .task-detail-grid { grid-template-columns:1fr; }
+    }
+    .msg { margin:10px 0; border:1px solid var(--line); border-radius:12px; padding:10px 12px; max-width:900px; }
+    .msg.user { margin-left:auto; background:var(--user); }
+    .msg.agent { background:var(--agent); }
+    .msg.agent.role-planner { background:var(--planner); border-color:#3f5e95; }
+    .msg.agent.role-writer { background:var(--writer); border-color:#3a7f69; }
+    .msg.agent.role-critic { background:var(--critic); border-color:#a55a73; }
+    .msg.agent.role-coder { background:var(--coder); border-color:#6b62b3; }
+    .meta { font-size:12px; color:var(--muted); margin-bottom:6px; }
+    .status-text { font-size:13px; line-height:1.45; }
+    .typing {
+      display:flex; align-items:center; gap:8px;
+      margin:10px 0; border:1px dashed var(--line); border-radius:12px;
+      padding:10px 12px; max-width:420px; background:#121a2c;
+      color:var(--muted); font-size:13px;
+    }
+    .dots { display:inline-flex; gap:4px; }
+    .dots i {
+      width:6px; height:6px; border-radius:999px; background:#a5b1cd; display:block;
+      animation: blink 1.2s infinite ease-in-out;
+    }
+    .dots i:nth-child(2){ animation-delay:.15s; }
+    .dots i:nth-child(3){ animation-delay:.3s; }
+    @keyframes blink { 0%,80%,100%{opacity:.25; transform:translateY(0)} 40%{opacity:1; transform:translateY(-2px)} }
+    .composer { border-top:1px solid var(--line); padding:12px; background:#0b1120; display:flex; gap:8px; }
+    textarea, input, select, button {
+      border:1px solid var(--line); background:var(--panel2); color:var(--text); border-radius:10px; padding:10px;
+    }
+    textarea { flex:1; min-height:60px; resize:vertical; }
+    button { cursor:pointer; font-weight:600; }
+    .stack { display:grid; gap:8px; }
+    .warn { color:#ffcc8a; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="side">
+      <div class="brand"><div class="dot"></div> AGENT TEAM</div>
+      <div class="card stack">
+        <div class="row">
+          <input id="sender" value="web_user" placeholder="보내는 사람" style="width:100%" />
+        </div>
+        <div class="row">
+          <select id="mode" style="width:100%">
+            <option value="autonomous-lite" selected>autonomous-lite</option>
+            <option value="autonomous">autonomous</option>
+            <option value="guided">guided</option>
+            <option value="team-autonomous">team-autonomous</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="newChat" style="flex:1">새 채팅방</button>
+          <button id="refresh" style="flex:1">새로고침</button>
+        </div>
+        <div class="mini" id="chatInfo">chat: -</div>
+      </div>
+
+      <div class="card">
+        <div><b>활성 에이전트 선택</b></div>
+        <div class="mini">프로젝트별로 참여 멤버를 다르게 설정할 수 있어요.</div>
+        <div id="agentPicker" class="agents"></div>
+        <button id="saveAgents" style="margin-top:10px; width:100%">이 채팅방에 적용</button>
+        <div id="saveHint" class="warn"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="top">
+        <div class="title"># agent-discussion</div>
+        <div class="live" id="activeAgents"></div>
+      </div>
+      <div class="deliverable-box" id="deliverableBox" style="display:none">
+        <div class="deliverable-head">
+          <b>작업 결과물</b>
+          <button id="copyDeliverable">복사</button>
+        </div>
+        <div class="mini" id="deliverableMeta"></div>
+        <div class="deliverable-body" id="deliverableBody"></div>
+      </div>
+      <div class="progress-box" id="progressBox" style="display:none">
+        <div class="progress-head"><b>진행 현황</b></div>
+        <div class="progress-list" id="progressList"></div>
+      </div>
+      <div class="board-box" id="boardBox" style="display:none">
+        <div class="board-head"><b>작업 보드</b></div>
+        <div class="board-columns" id="boardColumns"></div>
+      </div>
+      <div class="task-detail-box" id="taskDetailBox" style="display:none">
+        <div class="task-detail-head">
+          <div>
+            <div class="task-detail-title" id="taskDetailTitle">작업 상세</div>
+            <div class="mini" id="taskDetailMeta"></div>
+          </div>
+          <div class="task-detail-actions">
+            <select id="taskOwnerSelect"></select>
+            <button id="applyOwnerBtn">담당 변경</button>
+            <button id="rerunTaskBtn">재실행</button>
+            <button id="blockTaskBtn">차단</button>
+            <button id="unblockTaskBtn">차단 해제</button>
+          </div>
+        </div>
+        <div class="task-detail-grid">
+          <div class="task-detail-card">
+            <b>작업 설명</b>
+            <div class="task-detail-body" id="taskDetailDescription"></div>
+          </div>
+          <div class="task-detail-card">
+            <b>의존 작업</b>
+            <div class="task-detail-list" id="taskDetailDependencies"></div>
+          </div>
+          <div class="task-detail-card">
+            <b>산출물</b>
+            <div class="task-detail-list" id="taskDetailArtifacts"></div>
+          </div>
+          <div class="task-detail-card">
+            <b>작업 이력</b>
+            <div class="task-detail-list" id="taskDetailActivity"></div>
+          </div>
+        </div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <div class="composer">
+        <textarea id="text" placeholder="팀에게 질문하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"></textarea>
+        <button id="send">전송</button>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const apiBase = location.origin;
+    let current = null;
+    let allAgents = [];
+
+    const chatEl = document.getElementById('chat');
+    const chatInfoEl = document.getElementById('chatInfo');
+    const activeAgentsEl = document.getElementById('activeAgents');
+    const pickerEl = document.getElementById('agentPicker');
+    const saveHintEl = document.getElementById('saveHint');
+    const deliverableBoxEl = document.getElementById('deliverableBox');
+    const deliverableMetaEl = document.getElementById('deliverableMeta');
+    const deliverableBodyEl = document.getElementById('deliverableBody');
+    const progressBoxEl = document.getElementById('progressBox');
+    const progressListEl = document.getElementById('progressList');
+    const boardBoxEl = document.getElementById('boardBox');
+    const boardColumnsEl = document.getElementById('boardColumns');
+    const taskDetailBoxEl = document.getElementById('taskDetailBox');
+    const taskDetailTitleEl = document.getElementById('taskDetailTitle');
+    const taskDetailMetaEl = document.getElementById('taskDetailMeta');
+    const taskDetailDescriptionEl = document.getElementById('taskDetailDescription');
+    const taskDetailDependenciesEl = document.getElementById('taskDetailDependencies');
+    const taskDetailArtifactsEl = document.getElementById('taskDetailArtifacts');
+    const taskDetailActivityEl = document.getElementById('taskDetailActivity');
+    const taskOwnerSelectEl = document.getElementById('taskOwnerSelect');
+    const applyOwnerBtnEl = document.getElementById('applyOwnerBtn');
+    const rerunTaskBtnEl = document.getElementById('rerunTaskBtn');
+    const blockTaskBtnEl = document.getElementById('blockTaskBtn');
+    const unblockTaskBtnEl = document.getElementById('unblockTaskBtn');
+    let selectedTaskId = null;
+    let currentBoardTasks = [];
+    let currentTaskDetail = null;
+    let typingEl = null;
+
+    function esc(s){ return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+    async function api(path, options={}){
+      const r = await fetch(`${apiBase}${path}`, {headers:{'Content-Type':'application/json'}, ...options});
+      if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      return r.json();
+    }
+
+    function handleLabel(handle){
+      if(!handle) return 'system';
+      const found = allAgents.find(a => String(a.handle || '').toLowerCase() === String(handle).toLowerCase());
+      return found?.display_name || handle;
+    }
+
+    function setCurrentChat(conv){
+      current = {...conv, kind:'chat'};
+    }
+
+    function setCurrentTeamRun(snapshot){
+      const next = snapshot.run || {};
+      if(current?.kind !== 'team_run' || current?.id !== next.id){
+        selectedTaskId = null;
+      }
+      current = {...next, conversation: snapshot.conversation || null, kind:'team_run'};
+    }
+
+    function currentSelectedAgents(){
+      return current?.selected_agents || current?.conversation?.selected_agents || [];
+    }
+
+    function renderMessages(items){
+      const userItems = (items || []).filter(m => m.message_type === 'user');
+      chatEl.innerHTML = userItems
+        .map(m => `<div class="msg user"><div class="meta">USER · ${esc(m.created_at)}</div><div>${esc(m.raw_text)}</div></div>`)
+        .join('');
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function showTyping(label='에이전트'){
+      hideTyping();
+      typingEl = document.createElement('div');
+      typingEl.className = 'typing';
+      typingEl.innerHTML = `<span>${esc(label)} 입력 중</span><span class="dots"><i></i><i></i><i></i></span>`;
+      chatEl.appendChild(typingEl);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function hideTyping(){
+      if(typingEl && typingEl.parentNode){ typingEl.parentNode.removeChild(typingEl); }
+      typingEl = null;
+    }
+
+    function renderActiveAgents(entity){
+      const selected = new Set(entity?.selected_agents || entity?.conversation?.selected_agents || []);
+      const seen = new Set();
+      activeAgentsEl.innerHTML = allAgents
+        .filter(a => selected.has(a.handle))
+        .filter(a => {
+          const key = String((a.display_name || a.identity || a.handle || '')).toLowerCase();
+          if(seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map(a => `<span class="agent-chip">${esc(a.emoji || '🤖')} ${esc(a.display_name || a.handle)}</span>`)
+        .join('');
+    }
+
+    function renderPicker(entity){
+      const selected = new Set(entity?.selected_agents || entity?.conversation?.selected_agents || []);
+      const seen = new Set();
+      pickerEl.innerHTML = allAgents
+        .filter(a => {
+          const key = String((a.display_name || a.identity || a.handle || '')).toLowerCase();
+          if(seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map(a => {
+          const checked = selected.has(a.handle) ? 'checked' : '';
+          const lock = a.handle === 'planner' ? 'disabled' : '';
+          return `<label class="agent-chip"><input type="checkbox" value="${esc(a.handle)}" ${checked} ${lock}>${esc(a.emoji || '🤖')} ${esc(a.display_name || a.handle)}</label>`;
+        }).join('');
+    }
+
+    function renderDeliverable(item){
+      if(!item || !item.content){
+        deliverableBoxEl.style.display = 'none';
+        deliverableMetaEl.textContent = '';
+        deliverableBodyEl.textContent = '';
+        return;
+      }
+      deliverableBoxEl.style.display = '';
+      const who = item.created_by_handle || item.speaker_role || item.speaker_identity || item.speaker_bot_username || 'agent';
+      const kind = item.artifact_type ? `${item.artifact_type} v${item.version || 1}` : 'deliverable';
+      deliverableMetaEl.textContent = `${who} · ${kind} · ${item.created_at}`;
+      deliverableBodyEl.textContent = item.content;
+    }
+
+    function progressStatusText(status){
+      if(status === 'blocked') return '구성 수정 필요';
+      if(status === 'pending') return '다음 단계 대기';
+      if(status === 'waiting_user') return '추가 입력 대기';
+      if(status === 'done') return '단계 완료';
+      return '진행 중';
+    }
+
+    function renderChatProgress(steps){
+      if(!steps?.length){
+        progressBoxEl.style.display = 'none';
+        progressListEl.innerHTML = '';
+        return;
+      }
+      progressBoxEl.style.display = '';
+      progressListEl.innerHTML = steps.map(step => {
+        const actor = handleLabel(step.actor_handle);
+        const target = step.target_handle ? handleLabel(step.target_handle) : null;
+        const line = target
+          ? `${actor}이 ${target}에게 ${step.summary}`
+          : `${actor}이 ${step.summary}`;
+        return `<div class="progress-step"><div class="progress-line">${esc(line)}</div><div class="progress-meta">${esc(progressStatusText(step.status))} · ${esc(step.created_at)}</div></div>`;
+      }).join('');
+    }
+
+    function renderTeamActivity(events){
+      if(!events?.length){
+        progressBoxEl.style.display = 'none';
+        progressListEl.innerHTML = '';
+        return;
+      }
+      progressBoxEl.style.display = '';
+      progressListEl.innerHTML = events.map(event => {
+        const actor = event.actor_handle ? `${handleLabel(event.actor_handle)} · ` : '';
+        return `<div class="progress-step"><div class="progress-line">${esc(actor + (event.summary || '활동 기록'))}</div><div class="progress-meta">${esc(event.event_type || 'activity')} · ${esc(event.created_at)}</div></div>`;
+      }).join('');
+    }
+
+    function reviewStateLabel(task){
+      if(task.review_state === 'reviewed') return '검토 완료';
+      if(task.review_state === 'required') return '검토 필요';
+      return '';
+    }
+
+    function taskBadges(task){
+      const badges = [];
+      const review = reviewStateLabel(task);
+      if(review) badges.push(`<span class="task-badge review">${esc(review)}</span>`);
+      if(task.latest_artifact_type) badges.push(`<span class="task-badge artifact">${esc(task.latest_artifact_type)}</span>`);
+      if(task.ready) badges.push(`<span class="task-badge ready">ready</span>`);
+      return badges.join('');
+    }
+
+    function renderBoard(tasks){
+      currentBoardTasks = tasks || [];
+      const statuses = ['todo', 'in_progress', 'review', 'blocked', 'done'];
+      const titles = {todo:'Todo', in_progress:'In Progress', review:'Review', blocked:'Blocked', done:'Done'};
+      if(!tasks?.length){
+        boardBoxEl.style.display = 'none';
+        boardColumnsEl.innerHTML = '';
+        renderTaskDetail(null);
+        return;
+      }
+      boardBoxEl.style.display = '';
+      const availableTaskIds = new Set(tasks.map(task => task.id));
+      if(!selectedTaskId || !availableTaskIds.has(selectedTaskId)){
+        selectedTaskId = (tasks.find(task => task.status !== 'done') || tasks[0] || {}).id || null;
+      }
+      boardColumnsEl.innerHTML = statuses.map(status => {
+        const items = tasks.filter(task => task.status === status);
+        const cards = items.map(task => {
+          const active = task.id === selectedTaskId ? ' active' : '';
+          return `<div class="task-card${active}" data-task-id="${esc(task.id)}"><div class="task-title">${esc(task.title)}</div><div class="task-meta">${esc(handleLabel(task.owner_handle))} · ${esc(task.artifact_goal || '-')}</div><div class="task-flags">${taskBadges(task)}</div></div>`;
+        }).join('') || '<div class="task-meta">비어 있음</div>';
+        return `<div class="board-col"><h4>${esc(titles[status])}</h4>${cards}</div>`;
+      }).join('');
+    }
+
+    function renderTaskDetail(payload){
+      currentTaskDetail = payload || null;
+      if(!payload?.task){
+        taskDetailBoxEl.style.display = 'none';
+        taskDetailTitleEl.textContent = '작업 상세';
+        taskDetailMetaEl.textContent = '';
+        taskDetailDescriptionEl.textContent = '';
+        taskDetailDependenciesEl.innerHTML = '';
+        taskDetailArtifactsEl.innerHTML = '';
+        taskDetailActivityEl.innerHTML = '';
+        taskOwnerSelectEl.innerHTML = '';
+        taskOwnerSelectEl.disabled = true;
+        applyOwnerBtnEl.disabled = true;
+        rerunTaskBtnEl.disabled = true;
+        blockTaskBtnEl.disabled = true;
+        unblockTaskBtnEl.disabled = true;
+        return;
+      }
+      const task = payload.task;
+      const meta = [
+        handleLabel(task.owner_handle),
+        task.status,
+        task.artifact_goal || '-',
+      ];
+      const review = reviewStateLabel(task);
+      if(review) meta.push(review);
+      taskDetailBoxEl.style.display = '';
+      taskDetailTitleEl.textContent = task.title || '작업 상세';
+      taskDetailMetaEl.textContent = meta.join(' · ');
+      taskDetailDescriptionEl.textContent = task.description || '-';
+      const owners = Array.from(new Set((payload.run?.selected_agents || []).filter(Boolean)));
+      taskOwnerSelectEl.innerHTML = owners.map(handle => {
+        const selected = handle === task.owner_handle ? 'selected' : '';
+        return `<option value="${esc(handle)}" ${selected}>${esc(handleLabel(handle))}</option>`;
+      }).join('');
+      taskOwnerSelectEl.disabled = owners.length === 0;
+      applyOwnerBtnEl.disabled = owners.length === 0;
+      rerunTaskBtnEl.disabled = false;
+      blockTaskBtnEl.disabled = task.status === 'blocked';
+      unblockTaskBtnEl.disabled = task.status !== 'blocked';
+      taskDetailDependenciesEl.innerHTML = (payload.dependencies || []).map(dep => {
+        return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(dep.title)}</div><div class="task-meta">${esc(handleLabel(dep.owner_handle))} · ${esc(dep.status)} · ${esc(dep.artifact_goal || '-')}</div></div>`;
+      }).join('') || '<div class="task-empty">선행 작업 없음</div>';
+      taskDetailArtifactsEl.innerHTML = (payload.artifacts || []).map(item => {
+        return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(item.artifact_type)} v${esc(item.version || 1)}</div><div class="task-meta">${esc(handleLabel(item.created_by_handle))} · ${esc(item.created_at)}</div><div class="task-detail-body">${esc(item.content || '')}</div></div>`;
+      }).join('') || '<div class="task-empty">아직 저장된 산출물이 없습니다.</div>';
+      taskDetailActivityEl.innerHTML = (payload.activity || []).map(item => {
+        const actor = item.actor_handle ? `${handleLabel(item.actor_handle)} · ` : '';
+        return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(item.summary || '활동 기록')}</div><div class="task-meta">${esc(actor + (item.event_type || 'activity'))} · ${esc(item.created_at)}</div></div>`;
+      }).join('') || '<div class="task-empty">아직 기록된 작업 이력이 없습니다.</div>';
+    }
+
+    async function syncTaskDetail(tasks){
+      if(current?.kind !== 'team_run' || !tasks?.length){
+        renderTaskDetail(null);
+        return;
+      }
+      const availableTaskIds = new Set(tasks.map(task => task.id));
+      if(!selectedTaskId || !availableTaskIds.has(selectedTaskId)){
+        selectedTaskId = (tasks.find(task => task.status !== 'done') || tasks[0] || {}).id || null;
+      }
+      if(!selectedTaskId){
+        renderTaskDetail(null);
+        return;
+      }
+      const detail = await api(`/web/tasks/${selectedTaskId}`);
+      renderTaskDetail(detail);
+      renderBoard(tasks);
+    }
+
+    async function applyTeamSnapshot(data){
+      setCurrentTeamRun(data);
+      renderMessages(data.items || []);
+      renderTeamActivity(data.activity || []);
+      renderBoard(data.tasks || []);
+      await syncTaskDetail(data.tasks || []);
+      renderDeliverable(data.deliverable || null);
+      renderActiveAgents(current);
+      renderPicker(current);
+      chatInfoEl.textContent = workspaceSummary(current);
+    }
+
+    async function updateSelectedTask(body){
+      if(current?.kind !== 'team_run' || !currentTaskDetail?.task?.id) return;
+      const data = await api(`/web/tasks/${currentTaskDetail.task.id}`, {
+        method:'PATCH',
+        body: JSON.stringify(body),
+      });
+      await applyTeamSnapshot(data);
+    }
+
+    function selectedFromPicker(){
+      const values = Array.from(pickerEl.querySelectorAll('input[type=checkbox]:checked')).map(el => el.value);
+      if(!values.includes('planner')) values.unshift('planner');
+      return values;
+    }
+
+    async function loadAgents(){
+      const data = await api('/web/agents');
+      allAgents = data.agents || [];
+    }
+
+    async function loadWorkspaces(){
+      const teamRuns = await api('/web/team-runs');
+      if(teamRuns.items?.length){
+        current = {...teamRuns.items[0], kind:'team_run'};
+        await refresh();
+        return;
+      }
+      const chats = await api('/web/chats');
+      if(chats.items?.length){
+        setCurrentChat(chats.items[0]);
+        await refresh();
+        return;
+      }
+      await createWorkspace();
+    }
+
+    async function createWorkspace(){
+      const mode = document.getElementById('mode').value;
+      const selected_agents = ['planner','writer','critic','manager','coder'];
+      if(mode === 'team-autonomous'){
+        const data = await api('/web/team-runs', {method:'POST', body: JSON.stringify({title:'Web Team Run', requested_by:'web_user', selected_agents})});
+        await applyTeamSnapshot(data);
+      } else {
+        const data = await api('/web/chats', {method:'POST', body: JSON.stringify({title:'Web Team Chat', mode, selected_agents})});
+        setCurrentChat(data);
+        renderMessages([]);
+        renderChatProgress([]);
+        renderBoard([]);
+        renderTaskDetail(null);
+        renderDeliverable(null);
+      }
+      chatInfoEl.textContent = workspaceSummary(current);
+      renderActiveAgents(current);
+      renderPicker(current);
+      saveHintEl.textContent = '';
+    }
+
+    async function refresh(){
+      if(!current) return;
+      if(current.kind === 'team_run'){
+        const data = await api(`/web/team-runs/${current.id}/board`);
+        await applyTeamSnapshot(data);
+      } else {
+        const data = await api(`/web/chats/${current.id}/workspace`);
+        setCurrentChat(data.conversation || current);
+        renderMessages(data.items || []);
+        renderChatProgress(data.progress_steps || []);
+        renderBoard([]);
+        renderTaskDetail(null);
+        renderDeliverable(data.deliverable || null);
+      }
+      renderActiveAgents(current);
+      renderPicker(current);
+      chatInfoEl.textContent = workspaceSummary(current);
+    }
+
+    async function saveAgents(){
+      if(!current) return;
+      const selected_agents = selectedFromPicker();
+      if(current.kind === 'team_run'){
+        const data = await api(`/web/team-runs/${current.id}/agents`, {method:'PUT', body: JSON.stringify({selected_agents})});
+        current = {...current, ...data.run};
+      } else {
+        const data = await api(`/web/chats/${current.id}/agents`, {method:'PUT', body: JSON.stringify({selected_agents})});
+        setCurrentChat(data.conversation);
+      }
+      renderActiveAgents(current);
+      renderPicker(current);
+      saveHintEl.textContent = `적용됨: ${selected_agents.join(', ')}`;
+    }
+
+    async function send(){
+      if(!current) await createWorkspace();
+      const textEl = document.getElementById('text');
+      const sendBtn = document.getElementById('send');
+      const text = textEl.value.trim();
+      if(!text) return;
+      const sender = document.getElementById('sender').value.trim() || 'web_user';
+      const active = new Set(currentSelectedAgents());
+      const seenLabels = new Set();
+      const labels = allAgents
+        .filter(a => active.has(a.handle))
+        .map(a => a.display_name || a.handle)
+        .filter(label => {
+          const key = String(label || '').toLowerCase();
+          if(seenLabels.has(key)) return false;
+          seenLabels.add(key);
+          return true;
+        });
+      showTyping(labels.length ? labels.join(', ') : '에이전트');
+      sendBtn.disabled = true;
+      textEl.value = '';
+      let data;
+      try {
+        if(current.kind === 'team_run'){
+          data = await api(`/web/team-runs/${current.id}/requests`, {method:'POST', body: JSON.stringify({text, sender_name: sender})});
+          await applyTeamSnapshot(data);
+        } else {
+          data = await api(`/web/chats/${current.id}/messages`, {method:'POST', body: JSON.stringify({text, sender_name: sender})});
+          setCurrentChat(data.conversation);
+          renderMessages(data.items || []);
+          renderChatProgress(data.progress_steps || []);
+          renderBoard([]);
+          renderTaskDetail(null);
+        }
+      } finally {
+        hideTyping();
+        sendBtn.disabled = false;
+      }
+      renderDeliverable(data.deliverable || null);
+      renderActiveAgents(current);
+      renderPicker(current);
+      chatInfoEl.textContent = workspaceSummary(current);
+    }
+
+    function workspaceSummary(entity){
+      if(entity?.kind === 'team_run'){
+        return `team_run: ${entity?.id || '-'} · status: ${entity?.status || 'idle'}`;
+      }
+      const next = entity?.expected_next_handle ? ` · next: ${entity.expected_next_handle}` : '';
+      const status = entity?.status ? ` · status: ${entity.status}` : '';
+      return `chat: ${entity?.id || '-'}${status}${next}`;
+    }
+
+    document.getElementById('newChat').addEventListener('click', () => createWorkspace().catch(e => alert(e.message)));
+    document.getElementById('refresh').addEventListener('click', () => refresh().catch(e => alert(e.message)));
+    document.getElementById('saveAgents').addEventListener('click', () => saveAgents().catch(e => alert(e.message)));
+    document.getElementById('send').addEventListener('click', () => send().catch(e => alert(e.message)));
+    boardColumnsEl.addEventListener('click', (e) => {
+      const card = e.target.closest('[data-task-id]');
+      if(!card || current?.kind !== 'team_run') return;
+      selectedTaskId = card.getAttribute('data-task-id');
+      syncTaskDetail(currentBoardTasks).catch(err => alert(err.message));
+    });
+    applyOwnerBtnEl.addEventListener('click', () => {
+      const nextOwner = taskOwnerSelectEl.value;
+      if(!nextOwner || !currentTaskDetail?.task) return;
+      updateSelectedTask({owner_handle: nextOwner, actor_handle: 'planner'}).catch(err => alert(err.message));
+    });
+    rerunTaskBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({action: 'rerun', actor_handle: 'planner'}).catch(err => alert(err.message));
+    });
+    blockTaskBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({status: 'blocked'}).catch(err => alert(err.message));
+    });
+    unblockTaskBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({action: 'unblock', actor_handle: 'planner'}).catch(err => alert(err.message));
+    });
+    document.getElementById('copyDeliverable').addEventListener('click', async () => {
+      const text = deliverableBodyEl.textContent || '';
+      if(!text) return;
+      await navigator.clipboard.writeText(text);
+    });
+    document.getElementById('text').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send().catch(err => alert(err.message));
+      }
+    });
+
+    (async () => {
+      await loadAgents();
+      await loadWorkspaces();
+    })().catch(e => alert(e.message));
+  </script>
+</body>
+</html>

@@ -8,10 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.adapters.telegram.bot import bot
 from app.adapters.telegram.commands import dispatch_command
+from app.adapters.telegram.registry import BotRegistry
 from app.core.config import settings
 from app.orchestrator.engine import orchestrator
 
 logger = logging.getLogger(__name__)
+
+_registry = BotRegistry()
+_registry.load(settings.agent_config_path)
 
 
 def _is_allowed_chat(chat_id: int | str) -> bool:
@@ -37,6 +41,11 @@ def _make_send_fn(chat_id: str):
 
 async def process_update(update: dict[str, Any], db: Session) -> None:
     """Entry point for all incoming Telegram updates."""
+    received_by_bot = (
+        update.get("_received_by_bot_key")
+        or update.get("_received_by_bot")
+        or ""
+    )
     message = update.get("message") or update.get("channel_post")
     if not message:
         return  # Ignore non-message updates (edited messages, etc.)
@@ -57,10 +66,21 @@ async def process_update(update: dict[str, Any], db: Session) -> None:
     if sender.get("is_bot"):
         return
 
-    # 그룹/슈퍼그룹에서만 파이프라인 실행 (개인 DM 무시)
-    if chat_type not in ("group", "supergroup"):
-        logger.debug("Ignored private message from chat_type=%s", chat_type)
+    # 개인/그룹/슈퍼그룹에서 처리
+    if chat_type not in ("private", "group", "supergroup"):
+        logger.debug("Ignored unsupported chat_type=%s", chat_type)
         return
+
+    # 그룹에서는 inbound_identity 봇만 처리 (중복 실행 방지)
+    if chat_type in ("group", "supergroup"):
+        inbound = _registry.inbound_identity
+        if str(received_by_bot or "") != str(inbound):
+            logger.debug(
+                "Skip group update on non-inbound bot: got=%s inbound=%s",
+                received_by_bot,
+                inbound,
+            )
+            return
 
     if not _is_allowed_chat(chat_id):
         logger.warning("Rejected update from disallowed chat_id=%s", chat_id)
@@ -83,6 +103,8 @@ async def process_update(update: dict[str, Any], db: Session) -> None:
             telegram_message_id=tg_message_id,
             send_fn=send_fn,
             topic_id=topic_id,
+            inbound_identity=str(received_by_bot or ""),
+            chat_type=chat_type,
         )
     except Exception as exc:
         logger.exception("Orchestrator error for chat_id=%s: %s", chat_id, exc)

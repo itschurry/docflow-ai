@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from app.api.routes import router
 from app.core.config import settings
@@ -18,3 +20,9 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=settings.app_name,
               version=settings.app_version, lifespan=lifespan)
 app.include_router(router)
+
+
+@app.get("/workspace", include_in_schema=False)
+def workspace_page():
+    workspace_html = Path(__file__).resolve().parents[2] / "web" / "templates" / "team_chat.html"
+    return FileResponse(str(workspace_html))
