@@ -78,6 +78,28 @@ def _build_prompt(
 
 
 def _schema_for_output_type(output_type: str) -> dict[str, Any]:
+    table_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": {"type": "string"},
+            "headers": {"type": "array", "items": {"type": "string"}},
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+        "required": ["title", "headers", "rows"],
+    }
+    metadata_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "required": [],
+    }
     if output_type == "pptx":
         return {
             "type": "object",
@@ -101,7 +123,7 @@ def _schema_for_output_type(output_type: str) -> dict[str, Any]:
                 },
                 "sources": {"type": "array", "items": {"type": "string"}},
                 "notes": {"type": "array", "items": {"type": "string"}},
-                "metadata": {"type": "object"},
+                "metadata": metadata_schema,
             },
             "required": ["document_type", "title", "slides", "sources", "notes", "metadata"],
         }
@@ -130,10 +152,10 @@ def _schema_for_output_type(output_type: str) -> dict[str, Any]:
                         "required": ["name", "rows"],
                     },
                 },
-                "tables": {"type": "array", "items": {"type": "object"}},
+                "tables": {"type": "array", "items": table_schema},
                 "sources": {"type": "array", "items": {"type": "string"}},
                 "notes": {"type": "array", "items": {"type": "string"}},
-                "metadata": {"type": "object"},
+                "metadata": metadata_schema,
             },
             "required": ["document_type", "title", "sheets", "tables", "sources", "notes", "metadata"],
         }
@@ -167,10 +189,10 @@ def _schema_for_output_type(output_type: str) -> dict[str, Any]:
                     "required": ["heading", "level", "blocks"],
                 },
             },
-            "tables": {"type": "array", "items": {"type": "object"}},
+            "tables": {"type": "array", "items": table_schema},
             "sources": {"type": "array", "items": {"type": "string"}},
             "notes": {"type": "array", "items": {"type": "string"}},
-            "metadata": {"type": "object"},
+            "metadata": metadata_schema,
         },
         "required": ["document_type", "title", "sections", "tables", "sources", "notes", "metadata"],
     }
