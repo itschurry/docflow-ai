@@ -89,7 +89,7 @@ def build_sheet_ir_from_outline(title: str, rows: list[list[Any]], *, sheet_name
         "title": title or "시트 문서",
         "sheets": [
             {
-                "name": sheet_name[:31] or "summary",
+                "name": _sanitize_sheet_title(sheet_name),
                 "rows": normalized_rows,
             }
         ],
@@ -301,6 +301,14 @@ def _apply_korean_font_xlsx(wb: Workbook) -> None:
                     cell.font = ko_font
 
 
+def _sanitize_sheet_title(title: str) -> str:
+    """Remove or replace characters forbidden in Excel sheet titles."""
+    # Forbidden: \ / ? * [ ] :
+    import re
+    cleaned = re.sub(r'[\\/?*\[\]:]', '_', str(title or ""))
+    return cleaned[:31].strip() or "Sheet"
+
+
 def render_ir_to_xlsx_bytes(ir: dict[str, Any]) -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -314,7 +322,9 @@ def render_ir_to_xlsx_bytes(ir: dict[str, Any]) -> bytes:
         wb.remove(ws)
         for index, sheet in enumerate(ir.get("sheets") or []):
             ws_sheet = wb.create_sheet(index=index)
-            ws_sheet.title = (str(sheet.get("name") or f"sheet{index + 1}")[:31] or f"sheet{index + 1}")
+            # Use sanitizer to avoid "Invalid character / found in sheet title" errors
+            raw_name = str(sheet.get("name") or f"sheet{index + 1}")
+            ws_sheet.title = _sanitize_sheet_title(raw_name)
             for row in sheet.get("rows") or []:
                 ws_sheet.append([str(cell or "") for cell in row])
     elif document_type == "slides":
@@ -489,7 +499,7 @@ def _parse_xlsx_to_ir(file_path: str, content_type: str | None) -> dict[str, Any
                 rows.append(values[:20])
             if len(rows) >= 200:
                 break
-        sheets.append({"name": sheet.title[:31], "rows": rows})
+        sheets.append({"name": _sanitize_sheet_title(sheet.title), "rows": rows})
     return {
         "document_type": "sheet",
         "title": Path(file_path).stem,
