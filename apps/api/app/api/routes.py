@@ -1988,6 +1988,18 @@ def _extract_web_deliverable(
     run: conversation_models.TeamRunModel | None = None,
 ) -> dict | None:
     svc = ConversationService(db)
+    workflow_preset = _infer_team_workflow_preset(run.request_text or run.title) if run else None
+
+    def to_payload(artifact: conversation_models.ConversationArtifactModel) -> dict:
+        payload = _artifact_payload(artifact)
+        if workflow_preset == "presentation_team" and payload.get("content"):
+            payload["raw_content"] = payload["content"]
+            payload["content"] = _presentation_user_visible_markdown(
+                run.title or "최종 발표자료",
+                str(payload["content"] or "").strip(),
+            )
+        return payload
+
     if run:
         team_svc = TeamRunService(db)
         tasks = team_svc.list_tasks(run.id)
@@ -2000,7 +2012,7 @@ def _extract_web_deliverable(
                 artifact_type="final",
             )
             if artifact and artifact.content.strip():
-                return _artifact_payload(artifact)
+                return to_payload(artifact)
         decision_task_ids = [task.id for task in tasks if task.artifact_goal == "decision" and task.status == "done"]
         if decision_task_ids:
             artifact = _latest_active_task_artifact(
@@ -2010,7 +2022,7 @@ def _extract_web_deliverable(
                 artifact_type="decision",
             )
             if artifact and artifact.content.strip():
-                return _artifact_payload(artifact)
+                return to_payload(artifact)
         brief_task_ids = [task.id for task in tasks if task.artifact_goal == "brief" and task.status == "done"]
         if brief_task_ids and run.plan_status != "approved":
             artifact = _latest_active_task_artifact(
@@ -2020,7 +2032,7 @@ def _extract_web_deliverable(
                 artifact_type="brief",
             )
             if artifact and artifact.content.strip():
-                return _artifact_payload(artifact)
+                return to_payload(artifact)
         for owner_group in (("writer",), ("coder",), ("planner", "manager", "critic", "reviewer")):
             draft_task_ids = [
                 task.id
@@ -2038,12 +2050,12 @@ def _extract_web_deliverable(
                 artifact_type="draft",
             )
             if artifact and artifact.content.strip():
-                return _artifact_payload(artifact)
+                return to_payload(artifact)
 
     for artifact_type in ("final", "decision", "brief", "draft"):
         artifact = svc.get_latest_artifact(conversation_id, artifact_type)
         if artifact and artifact.content.strip():
-            return _artifact_payload(artifact)
+            return to_payload(artifact)
 
     rows = (
         db.query(conversation_models.MessageModel)
@@ -2179,6 +2191,26 @@ def _build_ppt_slides_from_text(title: str, body_text: str) -> list[dict]:
 def _build_structured_deliverable(title: str, body_text: str) -> dict:
     slides = _build_ppt_slides_from_text(title, body_text)
 
+    def is_meta_bullet(raw_line: str) -> bool:
+        lowered = str(raw_line or "").strip().lower()
+        return lowered.startswith(
+            (
+                "발표 포인트:",
+                "발표자 메모:",
+                "speaker notes:",
+                "출처:",
+                "참고 출처",
+                "sources:",
+                "검증 메모:",
+                "검토 메모:",
+                "작성 메모:",
+                "현재 판단:",
+                "남은 리스크:",
+                "상태:",
+                "자동 반려 횟수:",
+            )
+        )
+
     def normalize_slide_title(raw_title: str) -> str:
         text = str(raw_title or "핵심 내용").strip() or "핵심 내용"
         match = re.match(r"^슬라이드\s*\d+\.\s*(.+)$", text)
@@ -2193,7 +2225,7 @@ def _build_structured_deliverable(title: str, body_text: str) -> dict:
                 str(line).strip()
                 for line in item.get("bullets", [])
                 if str(line).strip()
-                and not str(line).strip().lower().startswith(("발표 포인트:", "발표자 메모:", "speaker notes:"))
+                and not is_meta_bullet(str(line))
             ],
             "speaker_notes": " ".join(
                 [
@@ -2207,7 +2239,7 @@ def _build_structured_deliverable(title: str, body_text: str) -> dict:
                     str(line).strip()
                     for line in item.get("bullets", [])
                     if str(line).strip()
-                    and not str(line).strip().lower().startswith(("출처:", "참고 출처"))
+                    and not is_meta_bullet(str(line))
                 ][:2]
             ),
         }
@@ -2318,6 +2350,11 @@ def _select_presentation_primary_body(draft_bodies: list[str]) -> str:
     indexed = list(enumerate(candidates))
     best_index, best_body = max(indexed, key=lambda item: score(item[1], item[0]))
     return best_body
+
+
+def _presentation_user_visible_markdown(title: str, content: str) -> str:
+    structured = _build_structured_deliverable(title, content)
+    return _structured_deliverable_to_markdown(structured, content)
 
 
 @router.post("/web/team-runs/{team_run_id}/exports", status_code=200)

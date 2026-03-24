@@ -18,6 +18,7 @@ from app.agents.base import _parse_agent_payload
 from app.api.routes import _build_structured_deliverable
 from app.api.routes import _build_done_with_risks_content
 from app.api.routes import _normalize_presentation_final_content
+from app.api.routes import _presentation_user_visible_markdown
 from app.api.routes import _task_execution_contract
 from app.api.routes import _coerce_team_tasks
 
@@ -936,6 +937,23 @@ def test_build_structured_deliverable_extracts_speaker_notes_and_skips_meta_sect
     assert any("서울시 2025" in item for item in structured["sources"])
 
 
+def test_build_structured_deliverable_filters_internal_meta_bullets():
+    structured = _build_structured_deliverable(
+        "정책 발표",
+        """# 정책 발표
+
+## 슬라이드 1
+- 정책 배경
+- 검증 메모: 수치 근거 보강 필요
+- 출처: 서울시 2025 https://example.com/source
+- 발표 포인트: 실행 순서 중심으로 설명
+""",
+    )
+    assert structured["slide_outline"][0]["bullets"] == ["정책 배경"]
+    assert structured["slide_outline"][0]["speaker_notes"] == "실행 순서 중심으로 설명"
+    assert any("서울시 2025" in item for item in structured["sources"])
+
+
 def test_presentation_task_execution_contracts_are_role_specific():
     run = ConversationModel(title="발표 런", chat_id="x", platform="web")
     run.request_text = "서울 야간관광 활성화 전략 발표자료 작성"
@@ -1016,6 +1034,38 @@ def test_done_with_risks_presentation_prefers_slide_draft_and_keeps_meta_out_of_
     assert structured["slide_outline"][0]["title"] == "슬라이드 1"
     assert structured["slide_outline"][0]["speaker_notes"] == "정책 순서를 강조"
     assert not any("done_with_risks" in " ".join(slide["bullets"]) for slide in structured["slide_outline"])
+
+
+def test_presentation_user_visible_markdown_strips_appendix_sections():
+    cleaned = _presentation_user_visible_markdown(
+        "발표 런",
+        """# 발표 런
+
+## 요청
+서울 야간관광 활성화 전략 발표자료 작성
+
+## Slide Outline
+
+## 슬라이드 1. 정책 배경
+- 야간 체류시간 확대
+- 발표 포인트: 실행 순서 중심 설명
+
+## 작성 메모
+- 상태: done_with_risks
+- 현재 판단: 근거 보강 필요
+
+## 검토 메모
+- 출처 보강 필요
+
+## 참고 출처
+- 서울시 2025 https://example.com/source
+""",
+    )
+    assert "## 작성 메모" not in cleaned
+    assert "## 검토 메모" not in cleaned
+    assert "## 요청" not in cleaned
+    assert "## Slide Outline" in cleaned
+    assert "## 참고 출처" in cleaned
 
 
 def test_presentation_final_is_normalized_into_slide_markdown(client):
