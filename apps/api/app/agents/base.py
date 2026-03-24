@@ -370,7 +370,8 @@ def _role_contract_rules(handle: str) -> str:
     rules = {
         "planner": "- planner는 작업 가능 상태가 되면 artifact_update.type을 brief 또는 decision으로 남기고 writer를 제안하세요\n",
         "writer": "- writer는 반드시 draft를 남기고 critic을 제안하세요\n",
-        "critic": "- critic은 반드시 review_notes를 남기고 manager를 제안하세요\n",
+        "critic": "- critic은 반드시 review_notes를 남기고 qa를 제안하세요\n",
+        "qa": "- qa는 반드시 review_notes를 남기고 manager를 제안하세요\n",
         "manager": "- manager는 반드시 final을 남기고 done=true로 종료하세요\n",
     }
     return rules.get(handle, "")
@@ -426,6 +427,7 @@ def _fallback_status_message(handle: str, task_status: str | None) -> str:
         "planner": "기획 리드가 작업 기준을 정리 중입니다.",
         "writer": "작성 담당이 초안을 작성 중입니다.",
         "critic": "검토 담당이 검토 중입니다.",
+        "qa": "품질 보증 담당이 최종 검증 중입니다.",
         "manager": "최종 승인이 마감 중입니다.",
     }
     return labels.get(handle, "에이전트가 작업 중입니다.")

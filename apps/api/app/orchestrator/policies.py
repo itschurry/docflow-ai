@@ -11,7 +11,7 @@ MODE_PIPELINES: dict[str, list[str]] = {
     "guided": PIPELINE_ORDER,
     "autonomous-lite": ["planner"],
     "autonomous": ["planner"],
-    "debate": ["planner", "writer", "critic", "manager"],
+    "debate": ["planner", "writer", "critic", "qa", "manager"],
     "artifact": ["planner", "writer", "manager"],
 }
 
@@ -30,6 +30,7 @@ _TASK_KEYWORDS = {
     "해줘", "해주세요", "작업", "진행", "방안", "방법", "전략", "제안",
     "코드", "함수", "클래스", "api", "기능", "문서", "보고서", "초안",
     "협업", "토론", "각자", "서로", "의견", "관점",
+    "테스트", "검증", "품질", "qa", "test", "verify",
     "plan", "write", "review", "code", "analyze", "create", "build",
 }
 _COLLAB_KEYWORDS = {

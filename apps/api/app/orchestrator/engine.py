@@ -27,16 +27,18 @@ _IDENTITY_TO_HANDLE = {
     "pm": "planner",
     "writer": "writer",
     "critic": "critic",
+    "qa": "qa",
     "coder": "coder",
 }
 _ROLE_TO_HANDLE_ALIASES = {
     "pm": "planner",
 }
-_FIXED_CHAIN = ("planner", "writer", "critic", "manager")
+_FIXED_CHAIN = ("planner", "writer", "critic", "qa", "manager")
 _REQUIRED_ARTIFACT_TYPES = {
     "planner": {"brief", "decision"},
     "writer": {"draft"},
     "critic": {"review_notes"},
+    "qa": {"review_notes"},
     "manager": {"final"},
 }
 _SELF_HANDOFF_PATTERNS = (

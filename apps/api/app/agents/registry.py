@@ -12,6 +12,7 @@ from app.agents.coder import make_coder
 from app.agents.critic import make_critic
 from app.agents.manager import make_manager
 from app.agents.planner import make_planner
+from app.agents.qa import make_qa
 from app.agents.reviewer import make_reviewer
 from app.agents.writer import make_writer
 
@@ -24,11 +25,12 @@ _FACTORIES = {
     "critic": make_critic,
     "coder": make_coder,
     "reviewer": make_reviewer,
+    "qa": make_qa,
     "manager": make_manager,
 }
 
 # Pipeline execution order
-PIPELINE_ORDER = ["planner", "writer", "critic", "reviewer", "manager"]
+PIPELINE_ORDER = ["planner", "writer", "critic", "reviewer", "qa", "manager"]
 
 
 def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
