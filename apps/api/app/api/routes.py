@@ -43,7 +43,11 @@ from app.schemas.request_response import (
     TaskSummary,
     UploadFileResponse,
 )
+from app.services.anthropic_skills import AnthropicSkillsDocumentGenerator
+from app.services.anthropic_skills import anthropic_skills_available
+from app.services.anthropic_skills import default_document_provider
 from app.services.document_ir import build_slides_ir
+from app.services.document_ir import build_sheet_ir_from_outline
 from app.services.document_ir import build_word_ir_from_markdown
 from app.services.document_ir import extract_text_from_ir
 from app.services.document_ir import parse_document_to_ir
@@ -76,6 +80,7 @@ router = APIRouter()
 
 AUTO_REVIEW_MAX_ROUNDS = 2
 TEAM_EXPORT_PROJECT_NAME = "Agent Team Exports"
+WEB_UPLOAD_PROJECT_NAME = "Web Workspace Uploads"
 AUTO_REVIEW_REJECT_KEYWORDS = (
     "반려",
     "재작성",
@@ -108,6 +113,20 @@ PRESENTATION_REQUEST_KEYWORDS = (
     "presentation",
     "deck",
 )
+SHEET_REQUEST_KEYWORDS = (
+    "xlsx",
+    "excel",
+    "시트",
+    "sheet",
+    "표",
+    "예산표",
+    "스프레드시트",
+)
+OUTPUT_TYPE_PRESET_MAP = {
+    "docx": "docx_brief_team",
+    "xlsx": "xlsx_analysis_team",
+    "pptx": "presentation_team",
+}
 
 
 @router.get("/", include_in_schema=False)
@@ -125,6 +144,22 @@ def _normalize_oversight_mode(value: object | None) -> str:
     if normalized not in {"manual", "auto"}:
         raise HTTPException(status_code=400, detail="oversight_mode must be manual or auto")
     return normalized
+
+
+def _normalize_output_type(value: object | None) -> str:
+    normalized = str(value or "docx").strip().lower()
+    if normalized not in {"docx", "xlsx", "pptx"}:
+        raise HTTPException(status_code=400, detail="output_type must be docx, xlsx, or pptx")
+    return normalized
+
+
+def _infer_output_type_from_request_text(request_text: str | None) -> str:
+    lowered = str(request_text or "").strip().lower()
+    if any(keyword in lowered for keyword in PRESENTATION_REQUEST_KEYWORDS):
+        return "pptx"
+    if any(keyword in lowered for keyword in SHEET_REQUEST_KEYWORDS):
+        return "xlsx"
+    return "docx"
 
 
 def _infer_task_kind(artifact_goal: str) -> str:
@@ -154,6 +189,23 @@ def _ensure_team_export_project(db: Session) -> ProjectModel:
     project = ProjectModel(
         name=TEAM_EXPORT_PROJECT_NAME,
         description="Internal project for team run exports",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+def _ensure_web_upload_project(db: Session) -> ProjectModel:
+    project = (
+        db.execute(
+            select(ProjectModel).where(ProjectModel.name == WEB_UPLOAD_PROJECT_NAME).limit(1)
+        ).scalar_one_or_none()
+    )
+    if project:
+        return project
+    project = ProjectModel(
+        name=WEB_UPLOAD_PROJECT_NAME,
+        description="Internal project for workspace uploads",
     )
     db.add(project)
     db.flush()
@@ -236,10 +288,26 @@ def _build_deliverable_ir(
     content: str,
     run: conversation_models.TeamRunModel | None = None,
 ) -> dict:
-    preset = _infer_team_workflow_preset(run.request_text or run.title) if run else ""
+    preset = _run_workflow_preset(run)
+    output_type = str(getattr(run, "output_type", "") or "").strip().lower()
     if preset == "presentation_team":
         structured = _build_structured_deliverable(title, content)
         return build_slides_ir(title, structured.get("slide_outline") or [], sources=structured.get("sources") or [])
+    if output_type == "xlsx":
+        rows = [["섹션", "내용"]]
+        current_section = ""
+        for raw in str(content or "").splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("## "):
+                current_section = stripped[3:].strip()
+                continue
+            if stripped.startswith(("- ", "* ")):
+                rows.append([current_section or "요약", stripped[2:].strip()])
+            else:
+                rows.append([current_section or "요약", stripped])
+        return build_sheet_ir_from_outline(title, rows, sheet_name="summary")
     return build_word_ir_from_markdown(title, content)
 
 
@@ -413,6 +481,15 @@ def upload_file(
         document_ir=file_ir,
         created_at=file_row.created_at,
     )
+
+
+@router.post("/web/files", response_model=UploadFileResponse)
+def upload_web_file(
+    uploaded_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> UploadFileResponse:
+    project = _ensure_web_upload_project(db)
+    return upload_file(project.id, uploaded_file, db)
 
 
 @router.post("/api/projects/{project_id}/jobs", response_model=CreateJobResponse)
@@ -1061,10 +1138,11 @@ def create_web_team_run(
     requested_by = str(payload.get("requested_by") or "web_user").strip() or "web_user"
     mode = "team-autonomous"
     oversight_mode = _normalize_oversight_mode(payload.get("oversight_mode"))
+    output_type = _normalize_output_type(payload.get("output_type"))
     valid = {a["handle"] for a in orchestrator.list_agents_info()}
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
-        raw_selected = ["planner", "writer", "critic", "manager", "coder"]
+        raw_selected = ["planner", "writer", "critic", "manager"]
     raw_source_file_ids = payload.get("source_file_ids")
     if not isinstance(raw_source_file_ids, list):
         raw_source_file_ids = []
@@ -1095,6 +1173,8 @@ def create_web_team_run(
         mode=mode,
         oversight_mode=oversight_mode,
         requested_by=requested_by,
+        output_type=output_type,
+        document_provider=default_document_provider(),
         selected_agents=selected,
         source_file_ids=[str(item.id) for item in source_files],
         source_ir_summary=source_ir_summary,
@@ -1446,6 +1526,7 @@ async def send_web_team_run_request(
 ):
     text = str(payload.get("text") or "").strip()
     sender_name = str(payload.get("sender_name") or "web_user").strip() or "web_user"
+    output_type = payload.get("output_type")
     raw_source_file_ids = payload.get("source_file_ids")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -1457,6 +1538,10 @@ async def send_web_team_run_request(
         raise HTTPException(status_code=404, detail="Team run not found")
     if not isinstance(raw_source_file_ids, list):
         raw_source_file_ids = list(run.source_file_ids or [])
+    if output_type is not None:
+        run.output_type = _normalize_output_type(output_type)
+    elif not str(run.request_text or "").strip():
+        run.output_type = _infer_output_type_from_request_text(text)
 
     conv = db.get(conversation_models.ConversationModel, run.conversation_id)
     if not conv:
@@ -1541,8 +1626,15 @@ async def send_web_team_run_request(
         db.refresh(run)
         return _build_team_board_snapshot(db, run)
 
-    team_svc.update_run(run.id, request_text=text, status="planning", plan_status="pending")
-    brief, task_defs = await _decompose_team_request(planning_request, selected)
+    team_svc.update_run(
+        run.id,
+        request_text=text,
+        output_type=run.output_type,
+        document_provider=default_document_provider(),
+        status="planning",
+        plan_status="pending",
+    )
+    brief, task_defs = await _decompose_team_request(planning_request, selected, output_type=run.output_type)
 
     planner_task = team_svc.create_task(
         team_run_id=run.id,
@@ -2107,7 +2199,7 @@ def _extract_web_deliverable(
     run: conversation_models.TeamRunModel | None = None,
 ) -> dict | None:
     svc = ConversationService(db)
-    workflow_preset = _infer_team_workflow_preset(run.request_text or run.title) if run else None
+    workflow_preset = _run_workflow_preset(run) if run else None
 
     def to_payload(artifact: conversation_models.ConversationArtifactModel) -> dict:
         payload = _artifact_payload(artifact)
@@ -2158,7 +2250,7 @@ def _extract_web_deliverable(
             )
             if artifact and artifact.content.strip():
                 return to_payload(artifact)
-        for owner_group in (("writer",), ("coder",), ("planner", "manager", "critic", "reviewer")):
+        for owner_group in (("writer",), ("planner", "manager", "critic", "reviewer")):
             draft_task_ids = [
                 task.id
                 for task in tasks
@@ -2198,7 +2290,7 @@ def _extract_web_deliverable(
     def body_of(msg) -> str:
         return (msg.visible_message or msg.raw_text or "").strip()
 
-    priorities = ("manager", "writer", "coder", "planner", "critic", "reviewer")
+    priorities = ("manager", "writer", "planner", "critic", "reviewer")
     for role in priorities:
         for msg in rows:
             if (msg.speaker_role or "") != role:
@@ -2493,9 +2585,11 @@ def export_web_team_run_deliverable(
     if not run or not run.conversation_id:
         raise HTTPException(status_code=404, detail="Team run not found")
 
-    export_format = str(payload.get("format") or "docx").strip().lower()
+    export_format = _normalize_output_type(payload.get("format") or run.output_type)
     if export_format not in {"docx", "pptx", "xlsx"}:
         raise HTTPException(status_code=400, detail="format must be docx, xlsx, or pptx")
+    if export_format != run.output_type:
+        raise HTTPException(status_code=400, detail=f"format must match run output_type ({run.output_type})")
 
     deliverable = _extract_web_deliverable(db, run.conversation_id, run=run)
     if not deliverable or not str(deliverable.get("content") or "").strip():
@@ -2506,23 +2600,46 @@ def export_web_team_run_deliverable(
     filename_base = _slugify_filename(title, default="team-deliverable")
     structured = _build_structured_deliverable(title, content)
     document_ir = deliverable.get("structured_ir") or _build_deliverable_ir(title=title, content=content, run=run)
+    extracted_text = extract_text_from_ir(document_ir) or _structured_deliverable_to_markdown(structured, content)
+    generated_provider = "internal_fallback"
 
-    if export_format == "docx":
-        docx_body = _structured_deliverable_to_markdown(structured, content)
-        file_bytes = render_ir_to_docx_bytes(document_ir)
-        filename = f"{filename_base}.docx"
-        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        extracted_text = docx_body
-    elif export_format == "xlsx":
-        file_bytes = render_ir_to_xlsx_bytes(document_ir)
-        filename = f"{filename_base}.xlsx"
-        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        extracted_text = extract_text_from_ir(document_ir)
-    else:
-        file_bytes = render_ir_to_pptx_bytes(document_ir)
-        filename = f"{filename_base}.pptx"
-        mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        extracted_text = _structured_deliverable_to_markdown(structured, content)
+    if anthropic_skills_available():
+        try:
+            generated = AnthropicSkillsDocumentGenerator().generate(
+                output_type=export_format,
+                title=title,
+                request_text=run.request_text,
+                content=content,
+                structured_ir=document_ir,
+                source_ir_summary=run.source_ir_summary,
+            )
+            file_bytes = generated["content"]
+            filename = str(generated.get("filename") or f"{filename_base}.{export_format}")
+            mime_type = str(generated.get("mime_type") or "")
+            generated_provider = "claude_skills"
+        except Exception:
+            if not settings.anthropic_skills_allow_fallback:
+                raise HTTPException(status_code=502, detail="Claude Skills export failed")
+            generated_provider = "internal_fallback"
+        else:
+            run.document_provider = generated_provider
+            db.flush()
+
+    if generated_provider == "internal_fallback":
+        if export_format == "docx":
+            file_bytes = render_ir_to_docx_bytes(document_ir)
+            filename = f"{filename_base}.docx"
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif export_format == "xlsx":
+            file_bytes = render_ir_to_xlsx_bytes(document_ir)
+            filename = f"{filename_base}.xlsx"
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            file_bytes = render_ir_to_pptx_bytes(document_ir)
+            filename = f"{filename_base}.pptx"
+            mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        run.document_provider = generated_provider
+        db.flush()
 
     file_row = _persist_team_export_file(
         db,
@@ -2545,6 +2662,7 @@ def export_web_team_run_deliverable(
         },
         "download_path": f"/api/files/{file_row.id}/download",
         "format": export_format,
+        "provider": generated_provider,
     }
 
 
@@ -2616,7 +2734,7 @@ def _task_execution_contract(
     run: conversation_models.TeamRunModel,
     task: conversation_models.TeamTaskModel,
 ) -> str:
-    preset = _infer_team_workflow_preset(run.request_text or run.title)
+    preset = _run_workflow_preset(run)
     shared = (
         "중요:\n"
         "- `visible_message`는 진행 상태를 1문장으로만 쓰세요.\n"
@@ -2626,16 +2744,6 @@ def _task_execution_contract(
     )
     if task.artifact_goal == "draft":
         if preset == "presentation_team":
-            if task.owner_handle == "coder":
-                return (
-                    f"{shared}"
-                    "이번 작업은 발표자료용 근거 보강 메모 작성입니다.\n"
-                    "- writer 초안을 다시 쓰지 말고, 슬라이드별 검증 메모를 정리하세요.\n"
-                    "- 형식은 `## 슬라이드 1`, `## 슬라이드 2`를 사용하세요.\n"
-                    "- 각 슬라이드마다 `- 검증 메모:` 1개 이상, `- 출처:` 1개 이상을 포함하세요.\n"
-                    "- 확인되지 않은 수치는 유지하지 말고 `검증 필요` 또는 정성 표현으로 바꾸세요.\n"
-                    "- 공식 기관/공공데이터/보고서 중심으로 출처를 적고, 없으면 `출처 확인 필요`라고 명시하세요.\n"
-                )
             return (
                 f"{shared}"
                 "이번 작업은 발표자료용 실제 슬라이드 초안 작성입니다.\n"
@@ -2646,6 +2754,23 @@ def _task_execution_contract(
                 "- 확인되지 않은 숫자나 기관명은 단정하지 말고 정성 표현 또는 `검증 필요`로 처리하세요.\n"
                 "- 마지막에 `## 참고 출처` 섹션을 포함하고, 출처가 없으면 `출처 확인 필요` 항목을 적으세요.\n"
                 f"- 반드시 원요청 '{run.request_text}'에 직접 답하는 발표 내용만 작성하세요.\n"
+            )
+        if preset == "xlsx_analysis_team":
+            return (
+                f"{shared}"
+                "이번 작업은 실제 엑셀 시트 초안 작성입니다.\n"
+                "- `## 시트: 이름` 형식으로 시트별 구조를 나누세요.\n"
+                "- 각 시트마다 첫 줄은 헤더 후보, 이후 줄은 행 데이터 또는 요약 표 형태로 작성하세요.\n"
+                "- 숫자·단위·기간은 열 기준이 모호하지 않게 쓰세요.\n"
+                f"- 반드시 원요청 '{run.request_text}'에 직접 답하는 표 구조를 작성하세요.\n"
+            )
+        if preset == "docx_brief_team":
+            return (
+                f"{shared}"
+                "이번 작업은 실제 문서 초안 작성입니다.\n"
+                "- `## 섹션명` 형식으로 3~6개 섹션을 구성하세요.\n"
+                "- 핵심 bullet, 짧은 문단, 필요 시 간단한 표를 포함해 재구성 가능한 문서로 쓰세요.\n"
+                f"- 반드시 원요청 '{run.request_text}'에 직접 답하는 문서를 작성하세요.\n"
             )
         return (
             f"{shared}"
@@ -2676,12 +2801,27 @@ def _task_execution_contract(
             return (
                 f"{shared}"
                 "이번 작업은 실제 최종 발표자료 작성입니다.\n"
-                "- writer 초안과 coder 검증 메모를 합쳐, 사용자에게 바로 전달 가능한 최종 발표자료를 작성하세요.\n"
+                "- 작성 담당 초안과 검토 담당 피드백을 반영해, 사용자에게 바로 전달 가능한 최종 발표자료를 작성하세요.\n"
                 "- `## 슬라이드 1` 형식으로 정확히 5~6개 슬라이드를 완성하세요.\n"
                 "- 각 슬라이드에 제목, 2~4개 bullet, `발표 포인트:` 1줄을 포함하세요.\n"
                 "- critic의 문제점을 반영해 출처 없는 숫자, 근거 없는 단정, 과한 장식 표현을 제거하세요.\n"
                 "- 마지막에 `## 참고 출처`를 넣고, 출처가 불완전하면 `출처 확인 필요`를 명시하세요.\n"
                 "- raw critique를 그대로 복붙하지 말고, 발표 자료 본문과 발표자 메모만 남기세요.\n"
+            )
+        if preset == "xlsx_analysis_team":
+            return (
+                f"{shared}"
+                "이번 작업은 실제 최종 Excel 문서 정리입니다.\n"
+                "- 최종 결과는 시트 구조가 명확한 워크북 형태로 정리하세요.\n"
+                "- `## 시트: 이름` 형식으로 시트별 목적, 헤더, 행 데이터를 정리하세요.\n"
+                "- 검토 메모는 본문에 섞지 말고 실제 표 구조만 남기세요.\n"
+            )
+        if preset == "docx_brief_team":
+            return (
+                f"{shared}"
+                "이번 작업은 실제 최종 Word 문서 정리입니다.\n"
+                "- 완결된 제목, 섹션, 본문, 필요 시 표를 포함한 보고용 문서로 마감하세요.\n"
+                "- 검토 메모를 복붙하지 말고 최종 본문만 남기세요.\n"
             )
         return (
             f"{shared}"
@@ -2812,17 +2952,24 @@ def _create_team_inbox_message(
     )
 
 
-def _infer_team_workflow_preset(request_text: str | None) -> str:
-    lowered = str(request_text or "").strip().lower()
-    if any(keyword in lowered for keyword in PRESENTATION_REQUEST_KEYWORDS):
-        return "presentation_team"
-    return "default_team"
+def _infer_team_workflow_preset(request_text: str | None, output_type: str | None = None) -> str:
+    normalized = str(output_type or "").strip().lower()
+    if not normalized:
+        normalized = _infer_output_type_from_request_text(request_text)
+    if normalized in OUTPUT_TYPE_PRESET_MAP:
+        return OUTPUT_TYPE_PRESET_MAP[normalized]
+    return "docx_brief_team"
 
 
-def _presentation_team_tasks(
-    request_text: str,
-    selected_agents: list[str],
-) -> list[dict]:
+def _run_workflow_preset(run: object | None) -> str:
+    if not run:
+        return "docx_brief_team"
+    request_text = getattr(run, "request_text", "") or getattr(run, "title", "")
+    output_type = getattr(run, "output_type", None)
+    return _infer_team_workflow_preset(request_text, output_type)
+
+
+def _presentation_team_tasks(selected_agents: list[str]) -> list[dict]:
     tasks = [
         {
             "title": "요청 정리 및 작업 구조화",
@@ -2840,9 +2987,8 @@ def _presentation_team_tasks(
         {
             "title": "슬라이드 초안 작성",
             "description": (
-                "정책 담당자 대상 발표를 전제로 5장 내외의 슬라이드 초안을 작성합니다. "
-                "각 슬라이드는 제목, 2~4개 bullet, 발표자 메모를 포함하고, "
-                "확인되지 않은 수치는 단정하지 말고 정성 표현 또는 검증 필요 메모로 처리합니다."
+                "정책 담당자 또는 경영진 보고를 전제로 5장 내외의 슬라이드 초안을 작성합니다. "
+                "각 슬라이드는 제목, 2~4개 bullet, 발표자 메모를 포함합니다."
             ),
             "owner_handle": "writer",
             "artifact_goal": "draft",
@@ -2851,66 +2997,35 @@ def _presentation_team_tasks(
             "status": "todo",
             "priority": 30,
         },
+        {
+            "title": "슬라이드 흐름 및 메시지 검토",
+            "description": (
+                "슬라이드 흐름, 메시지 선명도, 근거 표현, 청중 적합성, 실행 가능성을 검토하고 수정 의견을 남깁니다."
+            ),
+            "owner_handle": "critic",
+            "artifact_goal": "review_notes",
+            "depends_on_titles": ["슬라이드 초안 작성"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 65,
+        },
+        {
+            "title": "최종 발표자료 정리",
+            "description": (
+                "검토 의견을 반영해 최종 발표자료 구조를 확정합니다. 최종 산출물은 Claude Skills 기반 PPTX 생성에 바로 사용됩니다."
+            ),
+            "owner_handle": "manager",
+            "artifact_goal": "final",
+            "depends_on_titles": ["슬라이드 흐름 및 메시지 검토"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 90,
+        },
     ]
-    if "coder" in selected_agents:
-        tasks.append(
-            {
-                "title": "사실 검증 및 출처 보강",
-                "description": (
-                    "writer 초안의 주장, 연도, 수치, 사례를 점검하고 슬라이드별 검증 메모와 참고 출처 후보를 보강합니다. "
-                    "불확실한 수치는 삭제 또는 완화 표현을 제안하고, 공식 기관/보고서/공공데이터 중심으로 출처를 정리합니다."
-                ),
-                "owner_handle": "coder",
-                "artifact_goal": "draft",
-                "depends_on_titles": ["슬라이드 초안 작성"],
-                "review_required": False,
-                "status": "todo",
-                "priority": 45,
-            }
-        )
-    critic_deps = ["슬라이드 초안 작성"]
-    if any(task["owner_handle"] == "coder" for task in tasks):
-        critic_deps.append("사실 검증 및 출처 보강")
-    tasks.extend(
-        [
-            {
-                "title": "슬라이드 흐름 및 메시지 검토",
-                "description": (
-                    "슬라이드 흐름, 메시지 선명도, 정책 실행 가능성, 안전 운영 논리, 수치/출처 리스크를 검토하고 "
-                    "수정 의견을 남깁니다."
-                ),
-                "owner_handle": "critic",
-                "artifact_goal": "review_notes",
-                "depends_on_titles": critic_deps,
-                "review_required": False,
-                "status": "todo",
-                "priority": 65,
-            },
-            {
-                "title": "최종 발표자료 정리",
-                "description": (
-                    "검토와 사실 보강 내용을 반영해 경영진/정책 보고에 바로 사용할 수 있는 최종 발표자료를 작성합니다. "
-                    "슬라이드 제목, 핵심 bullet, 발표자 메모, 참고 출처를 정리하고 군더더기 없는 완성본으로 마감합니다."
-                ),
-                "owner_handle": "manager",
-                "artifact_goal": "final",
-                "depends_on_titles": ["슬라이드 흐름 및 메시지 검토"],
-                "review_required": False,
-                "status": "todo",
-                "priority": 90,
-            },
-        ]
-    )
-    return tasks
+    return [task for task in tasks if task["owner_handle"] in set(selected_agents) | {"planner"}]
 
 
-def _default_team_tasks(
-    request_text: str,
-    selected_agents: list[str],
-) -> list[dict]:
-    if _infer_team_workflow_preset(request_text) == "presentation_team":
-        return _presentation_team_tasks(request_text, selected_agents)
-    lowered = request_text.lower()
+def _docx_team_tasks(selected_agents: list[str]) -> list[dict]:
     tasks = [
         {
             "title": "요청 정리 및 작업 구조화",
@@ -2923,8 +3038,8 @@ def _default_team_tasks(
             "priority": 10,
         },
         {
-            "title": "초안 작성",
-            "description": "요청에 대한 1차 초안 또는 핵심 본문을 작성합니다.",
+            "title": "문서 초안 작성",
+            "description": "요청과 첨부 문서를 반영해 보고용 본문 초안을 작성합니다. 제목, 섹션, 핵심 bullet 또는 표 구조를 포함합니다.",
             "owner_handle": "writer",
             "artifact_goal": "draft",
             "depends_on_titles": ["요청 정리 및 작업 구조화"],
@@ -2932,48 +3047,88 @@ def _default_team_tasks(
             "status": "todo",
             "priority": 30,
         },
+        {
+            "title": "문서 구조 및 품질 검토",
+            "description": "문서 구조, 논리 흐름, 누락, 근거 표현, 재구성 완성도를 검토합니다.",
+            "owner_handle": "critic",
+            "artifact_goal": "review_notes",
+            "depends_on_titles": ["문서 초안 작성"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 60,
+        },
+        {
+            "title": "최종 Word 문서 정리",
+            "description": "검토 내용을 반영해 최종 문서 구조를 확정합니다. 최종 산출물은 Claude Skills 기반 DOCX 생성에 바로 사용됩니다.",
+            "owner_handle": "manager",
+            "artifact_goal": "final",
+            "depends_on_titles": ["문서 구조 및 품질 검토"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 90,
+        },
     ]
-    if "coder" in selected_agents and any(keyword in lowered for keyword in ("코드", "구현", "api", "설계", "architecture", "system")):
-        tasks.append(
-            {
-                "title": "기술 구현 포인트 정리",
-                "description": "기술 구조, 구현 포인트, 코드/시스템 관점을 보강합니다.",
-                "owner_handle": "coder",
-                "artifact_goal": "draft",
-                "depends_on_titles": ["요청 정리 및 작업 구조화"],
-                "review_required": False,
-                "status": "todo",
-                "priority": 35,
-            }
-        )
-    review_deps = ["초안 작성"]
-    if any(task["owner_handle"] == "coder" for task in tasks):
-        review_deps.append("기술 구현 포인트 정리")
-    tasks.extend(
-        [
-            {
-                "title": "내용 검토",
-                "description": "초안의 품질, 누락, 근거, 리스크를 검토합니다.",
-                "owner_handle": "critic",
-                "artifact_goal": "review_notes",
-                "depends_on_titles": review_deps,
-                "review_required": False,
-                "status": "todo",
-                "priority": 60,
-            },
-            {
-                "title": "최종본 정리",
-                "description": "검토 내용을 반영해 최종 결과물을 정리합니다.",
-                "owner_handle": "manager",
-                "artifact_goal": "final",
-                "depends_on_titles": ["내용 검토"],
-                "review_required": False,
-                "status": "todo",
-                "priority": 90,
-            },
-        ]
-    )
-    return tasks
+    return [task for task in tasks if task["owner_handle"] in set(selected_agents) | {"planner"}]
+
+
+def _xlsx_team_tasks(selected_agents: list[str]) -> list[dict]:
+    tasks = [
+        {
+            "title": "요청 정리 및 시트 구조화",
+            "description": "필요한 시트, 컬럼, 요약 지표, 계산 구조를 정리합니다.",
+            "owner_handle": "planner",
+            "artifact_goal": "brief",
+            "depends_on_titles": [],
+            "review_required": False,
+            "status": "done",
+            "priority": 10,
+        },
+        {
+            "title": "시트 초안 작성",
+            "description": "요청과 첨부 문서를 바탕으로 시트별 표 구조와 데이터 초안을 작성합니다.",
+            "owner_handle": "writer",
+            "artifact_goal": "draft",
+            "depends_on_titles": ["요청 정리 및 시트 구조화"],
+            "review_required": True,
+            "status": "todo",
+            "priority": 30,
+        },
+        {
+            "title": "시트 구조 및 계산 검토",
+            "description": "시트 구조, 표 일관성, 요약 지표, 누락 항목을 검토합니다.",
+            "owner_handle": "critic",
+            "artifact_goal": "review_notes",
+            "depends_on_titles": ["시트 초안 작성"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 60,
+        },
+        {
+            "title": "최종 Excel 문서 정리",
+            "description": "검토 내용을 반영해 최종 워크북 구조를 확정합니다. 최종 산출물은 Claude Skills 기반 XLSX 생성에 바로 사용됩니다.",
+            "owner_handle": "manager",
+            "artifact_goal": "final",
+            "depends_on_titles": ["시트 구조 및 계산 검토"],
+            "review_required": False,
+            "status": "todo",
+            "priority": 90,
+        },
+    ]
+    return [task for task in tasks if task["owner_handle"] in set(selected_agents) | {"planner"}]
+
+
+def _default_team_tasks(
+    request_text: str,
+    selected_agents: list[str],
+    *,
+    output_type: str = "docx",
+) -> list[dict]:
+    preset = _infer_team_workflow_preset(request_text, output_type)
+    if preset == "presentation_team":
+        return _presentation_team_tasks(selected_agents)
+    if preset == "xlsx_analysis_team":
+        return _xlsx_team_tasks(selected_agents)
+    return _docx_team_tasks(selected_agents)
 
 
 def _normalize_team_tasks(tasks: list[dict], selected_agents: list[str]) -> list[dict]:
@@ -3006,7 +3161,7 @@ def _normalize_team_tasks(tasks: list[dict], selected_agents: list[str]) -> list
     review_source_titles = [
         str(task["title"])
         for task in normalized
-        if task.get("owner_handle") in {"writer", "coder"}
+        if task.get("owner_handle") == "writer"
         and task.get("artifact_goal") in {"draft", "decision"}
     ]
     decision_titles = [
@@ -3111,13 +3266,15 @@ def _coerce_team_tasks(
 async def _decompose_team_request(
     request_text: str,
     selected_agents: list[str],
+    *,
+    output_type: str = "docx",
 ) -> tuple[str, list[dict]]:
     orchestrator._ensure_loaded()
     planner = orchestrator._agents.get("planner")
-    preset = _infer_team_workflow_preset(request_text)
+    preset = _infer_team_workflow_preset(request_text, output_type)
     if not planner:
         brief = f"요청 요약: {request_text[:500]}"
-        return brief, _default_team_tasks(request_text, selected_agents)
+        return brief, _default_team_tasks(request_text, selected_agents, output_type=output_type)
 
     prompt = (
         "다음 요청을 실무형 팀 작업으로 분해하세요.\n\n"
@@ -3161,9 +3318,9 @@ async def _decompose_team_request(
     if not brief:
         brief = f"요청 요약: {request_text[:500]}"
     if preset == "presentation_team":
-        tasks = _presentation_team_tasks(request_text, selected_agents)
+        tasks = _presentation_team_tasks(selected_agents)
     elif not tasks:
-        tasks = _default_team_tasks(request_text, selected_agents)
+        tasks = _default_team_tasks(request_text, selected_agents, output_type=output_type)
     return brief, _normalize_team_tasks(tasks, selected_agents)
 
 
@@ -3406,7 +3563,7 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     leader_session = next((session for session in sessions if session.role == "leader"), None)
     payload["run"]["leader_session_id"] = str(leader_session.id) if leader_session else None
     payload["run"]["active_sessions"] = len([session for session in sessions if session.status != "offline"])
-    payload["run"]["workflow_preset"] = _infer_team_workflow_preset(run.request_text or run.title)
+    payload["run"]["workflow_preset"] = _run_workflow_preset(run)
     payload["run"]["auto_review_max_rounds"] = AUTO_REVIEW_MAX_ROUNDS
     payload["run"]["auto_review_rounds_used"] = auto_review_rounds_used
     return payload
@@ -3547,7 +3704,7 @@ def _fallback_task_artifact_content(
     review_bodies: list[str],
 ) -> str:
     visible = ""
-    preset = _infer_team_workflow_preset(run.request_text or run.title)
+    preset = _run_workflow_preset(run)
     if result is not None:
         visible = str(getattr(result, "visible_message", "") or "").strip()
     substantive = _best_effort_result_content(task=task, result=result)
@@ -3760,7 +3917,7 @@ async def _execute_team_task(
     artifact_type, artifact_content = build_artifact_payload(result)
     if (
         task.artifact_goal == "final"
-        and _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team"
+        and _run_workflow_preset(run) == "presentation_team"
         and artifact_content.strip()
     ):
         artifact_content = _normalize_presentation_final_content(
@@ -3785,7 +3942,7 @@ async def _execute_team_task(
             artifact_type, artifact_content = build_artifact_payload(result)
             if (
                 task.artifact_goal == "final"
-                and _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team"
+                and _run_workflow_preset(run) == "presentation_team"
                 and artifact_content.strip()
             ):
                 artifact_content = _normalize_presentation_final_content(
@@ -3985,7 +4142,7 @@ def _build_done_with_risks_content(
 ) -> str:
     draft_text = "\n\n".join(draft_bodies[-2:]) if draft_bodies else "- 초안 없음"
     review_text = "\n\n".join(review_bodies[-2:]) if review_bodies else "- 검토 메모 없음"
-    if _infer_team_workflow_preset(run.request_text or run.title) == "presentation_team":
+    if _run_workflow_preset(run) == "presentation_team":
         primary_draft = _select_presentation_primary_body(draft_bodies)
         fallback_body = primary_draft or (
             "## 슬라이드 1: 자동 검토 마감\n"
@@ -4671,7 +4828,7 @@ def create_web_chat(
     valid = {a["handle"] for a in orchestrator.list_agents_info()}
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
-        raw_selected = ["planner", "writer", "critic", "manager", "coder"]
+        raw_selected = ["planner", "writer", "critic", "manager"]
     selected = _normalize_web_selected_agents(
         selected=raw_selected,
         valid_handles=valid,

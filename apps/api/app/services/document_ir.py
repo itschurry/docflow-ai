@@ -274,7 +274,7 @@ def render_ir_to_xlsx_bytes(ir: dict[str, Any]) -> bytes:
     if document_type == "sheet" and ir.get("sheets"):
         wb.remove(ws)
         for index, sheet in enumerate(ir.get("sheets") or []):
-            ws_sheet = wb.active if index == 0 else wb.create_sheet()
+            ws_sheet = wb.create_sheet(index=index)
             ws_sheet.title = (str(sheet.get("name") or f"sheet{index + 1}")[:31] or f"sheet{index + 1}")
             for row in sheet.get("rows") or []:
                 ws_sheet.append([str(cell or "") for cell in row])
@@ -371,7 +371,8 @@ def _parse_docx_to_ir(file_path: str, content_type: str | None) -> dict[str, Any
         text = paragraph.text.strip()
         if not text:
             continue
-        style_name = str(paragraph.style.name or "").lower()
+        style = getattr(paragraph, "style", None)
+        style_name = str(getattr(style, "name", "") or "").lower()
         if style_name.startswith("heading"):
             flush()
             level = 2
@@ -379,7 +380,7 @@ def _parse_docx_to_ir(file_path: str, content_type: str | None) -> dict[str, Any
                 level = int(style_name[-1:])
             current = {"heading": text, "level": min(level, 3), "blocks": []}
             continue
-        block_type = "bullet" if "list" in style_name or paragraph.style.name == "List Bullet" else "paragraph"
+        block_type = "bullet" if "list" in style_name or getattr(style, "name", "") == "List Bullet" else "paragraph"
         current["blocks"].append({"type": block_type, "text": text})
     if current["blocks"]:
         sections.append(current)

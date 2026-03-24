@@ -193,6 +193,8 @@ class TeamRunModel(Base):
     plan_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)
     requested_by: Mapped[str] = mapped_column(String(100), default="web_user", nullable=False)
     request_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    output_type: Mapped[str] = mapped_column(String(20), default="docx", nullable=False)
+    document_provider: Mapped[str] = mapped_column(String(30), default="internal_fallback", nullable=False)
     selected_agents: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     source_file_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     source_ir_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)

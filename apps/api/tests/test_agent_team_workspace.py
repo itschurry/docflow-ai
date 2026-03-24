@@ -81,7 +81,7 @@ def test_web_workspace_prefers_final_artifact(client):
     payload = {
         "title": "Artifact Chat",
         "mode": "autonomous-lite",
-        "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+        "selected_agents": ["planner", "writer", "critic", "manager"],
     }
     created = client.post("/web/chats", json=payload)
     assert created.status_code == 201
@@ -231,8 +231,9 @@ def test_team_run_uses_presentation_preset_for_slide_requests(client):
         "/web/team-runs",
         json={
             "title": "Presentation Run",
-            "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+            "selected_agents": ["planner", "writer", "critic", "manager"],
             "oversight_mode": "auto",
+            "output_type": "pptx",
         },
     )
     run_id = created.json()["run"]["id"]
@@ -349,7 +350,7 @@ def test_team_run_task_reassignment_records_activity(client):
         "/web/team-runs",
         json={
             "title": "Reassign Run",
-            "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+            "selected_agents": ["planner", "writer", "critic", "manager"],
         },
     )
     run_id = created.json()["run"]["id"]
@@ -361,12 +362,12 @@ def test_team_run_task_reassignment_records_activity(client):
 
     updated = client.patch(
         f"/web/tasks/{task['id']}",
-        json={"owner_handle": "coder", "actor_handle": "planner"},
+        json={"owner_handle": "critic", "actor_handle": "planner"},
     )
     assert updated.status_code == 200
     payload = updated.json()
     refreshed = next(item for item in payload["tasks"] if item["id"] == task["id"])
-    assert refreshed["owner_handle"] == "coder"
+    assert refreshed["owner_handle"] == "critic"
     assert any(event["event_type"] == "task_assigned" for event in payload["activity"])
 
 
@@ -959,20 +960,17 @@ def test_build_structured_deliverable_filters_internal_meta_bullets():
 def test_presentation_task_execution_contracts_are_role_specific():
     run = ConversationModel(title="발표 런", chat_id="x", platform="web")
     run.request_text = "서울 야간관광 활성화 전략 발표자료 작성"
+    run.output_type = "pptx"
     writer_task = TeamTaskModel(title="writer task", team_run_id=uuid.uuid4(), owner_handle="writer", artifact_goal="draft")
-    coder_task = TeamTaskModel(title="coder task", team_run_id=uuid.uuid4(), owner_handle="coder", artifact_goal="draft")
     critic_task = TeamTaskModel(title="critic task", team_run_id=uuid.uuid4(), owner_handle="critic", artifact_goal="review_notes")
     manager_task = TeamTaskModel(title="manager task", team_run_id=uuid.uuid4(), owner_handle="manager", artifact_goal="final")
 
     writer_contract = _task_execution_contract(run=run, task=writer_task)
-    coder_contract = _task_execution_contract(run=run, task=coder_task)
     critic_contract = _task_execution_contract(run=run, task=critic_task)
     manager_contract = _task_execution_contract(run=run, task=manager_task)
 
     assert "정확히 5~6개 슬라이드" in writer_contract
     assert "출처 확인 필요" in writer_contract
-    assert "검증 메모" in coder_contract
-    assert "출처:" in coder_contract
     assert "## 좋은 점" in critic_contract
     assert "정확히 5~6개 슬라이드" in manager_contract
     assert "raw critique를 그대로 복붙하지 말고" in manager_contract
@@ -1005,6 +1003,7 @@ def test_normalize_presentation_final_content_keeps_review_as_summary_not_slide(
 def test_done_with_risks_presentation_prefers_slide_draft_and_keeps_meta_out_of_slides():
     run = ConversationModel(title="리스크 발표 런", chat_id="x", platform="web")
     run.request_text = "서울 야간관광 활성화 전략 발표자료 작성"
+    run.output_type = "pptx"
 
     content = _build_done_with_risks_content(
         run=run,
@@ -1089,19 +1088,6 @@ def test_presentation_final_is_normalized_into_slide_markdown(client):
                 ),
             ],
         ),
-        "coder": _FakeAgent(
-            "coder",
-            [
-                _agent_result(
-                    "coder",
-                    "출처 보강 완료",
-                    None,
-                    done=True,
-                    artifact_type="draft",
-                    artifact_content="## 참고 출처\n- 서울시 2025 https://example.com/source",
-                ),
-            ],
-        ),
         "critic": _FakeAgent(
             "critic",
             [
@@ -1136,8 +1122,9 @@ def test_presentation_final_is_normalized_into_slide_markdown(client):
             "/web/team-runs",
             json={
                 "title": "Presentation Final Run",
-                "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+                "selected_agents": ["planner", "writer", "critic", "manager"],
                 "oversight_mode": "manual",
+                "output_type": "pptx",
             },
         )
         run_id = created.json()["run"]["id"]
@@ -1166,58 +1153,42 @@ def test_presentation_final_is_normalized_into_slide_markdown(client):
         orchestrator._loaded = original_loaded
 
 
-def test_team_run_can_export_docx_xlsx_and_pptx(client):
+def test_team_run_can_export_selected_output_type(client):
     _ensure_schema()
-    created = client.post(
-        "/web/team-runs",
-        json={
-            "title": "Export Run",
-            "selected_agents": ["planner", "writer", "critic", "manager"],
-            "oversight_mode": "auto",
-        },
-    )
-    run_id = created.json()["run"]["id"]
-    planned = client.post(
-        f"/web/team-runs/{run_id}/requests",
-        json={"text": "서울 역사 산책 발표자료를 작성해줘", "sender_name": "ceo"},
-    )
-    assert planned.status_code == 202
+    scenarios = [
+        ("docx", "서울 역사 산책 브리핑 문서를 작성해줘"),
+        ("xlsx", "서울 문화시설 운영 현황을 표로 정리한 엑셀 시트를 만들어줘"),
+        ("pptx", "서울 역사 산책 발표자료를 작성해줘"),
+    ]
+    for output_type, text in scenarios:
+        created = client.post(
+            "/web/team-runs",
+            json={
+                "title": f"Export Run {output_type}",
+                "selected_agents": ["planner", "writer", "critic", "manager"],
+                "oversight_mode": "auto",
+                "output_type": output_type,
+            },
+        )
+        run_id = created.json()["run"]["id"]
+        planned = client.post(
+            f"/web/team-runs/{run_id}/requests",
+            json={"text": text, "sender_name": "ceo"},
+        )
+        assert planned.status_code == 202
 
-    docx_export = client.post(
-        f"/web/team-runs/{run_id}/exports",
-        json={"format": "docx"},
-    )
-    assert docx_export.status_code == 200
-    docx_payload = docx_export.json()
-    assert docx_payload["file"]["original_name"].endswith(".docx")
+        exported = client.post(
+            f"/web/team-runs/{run_id}/exports",
+            json={"format": output_type},
+        )
+        assert exported.status_code == 200
+        export_payload = exported.json()
+        assert export_payload["file"]["original_name"].endswith(f".{output_type}")
+        assert export_payload["format"] == output_type
 
-    docx_download = client.get(docx_payload["download_path"])
-    assert docx_download.status_code == 200
-    assert len(docx_download.content) > 0
-
-    xlsx_export = client.post(
-        f"/web/team-runs/{run_id}/exports",
-        json={"format": "xlsx"},
-    )
-    assert xlsx_export.status_code == 200
-    xlsx_payload = xlsx_export.json()
-    assert xlsx_payload["file"]["original_name"].endswith(".xlsx")
-
-    xlsx_download = client.get(xlsx_payload["download_path"])
-    assert xlsx_download.status_code == 200
-    assert len(xlsx_download.content) > 0
-
-    pptx_export = client.post(
-        f"/web/team-runs/{run_id}/exports",
-        json={"format": "pptx"},
-    )
-    assert pptx_export.status_code == 200
-    pptx_payload = pptx_export.json()
-    assert pptx_payload["file"]["original_name"].endswith(".pptx")
-
-    pptx_download = client.get(pptx_payload["download_path"])
-    assert pptx_download.status_code == 200
-    assert len(pptx_download.content) > 0
+        downloaded = client.get(export_payload["download_path"])
+        assert downloaded.status_code == 200
+        assert len(downloaded.content) > 0
 
 
 def test_team_run_request_accepts_source_files_and_exposes_source_ir_summary(client):
@@ -1278,7 +1249,7 @@ def test_team_run_can_create_manual_task_and_execute_when_ready(client):
         "/web/team-runs",
         json={
             "title": "Manual Task Run",
-            "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+            "selected_agents": ["planner", "writer", "critic", "manager"],
         },
     )
     run_id = created.json()["run"]["id"]
@@ -1293,7 +1264,7 @@ def test_team_run_can_create_manual_task_and_execute_when_ready(client):
         json={
             "title": "추가 표 작성",
             "description": "요약 표를 만들고 핵심 포인트를 정리한다.",
-            "owner_handle": "coder",
+            "owner_handle": "writer",
             "artifact_goal": "draft",
             "priority": 80,
             "review_required": False,
@@ -1303,7 +1274,7 @@ def test_team_run_can_create_manual_task_and_execute_when_ready(client):
     assert created_task.status_code == 201
     payload = created_task.json()
     added = next(task for task in payload["tasks"] if task["title"] == "추가 표 작성")
-    assert added["owner_handle"] == "coder"
+    assert added["owner_handle"] == "writer"
     assert added["status"] == "done"
     assert any(event["event_type"] == "task_created" for event in payload["activity"])
 

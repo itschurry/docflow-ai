@@ -16,10 +16,15 @@ os.environ["UPLOAD_DIR"] = str(UPLOAD_PATH)
 os.environ["LLM_PROVIDER"] = "stub"
 
 
+def _cleanup_sqlite_files(path: Path) -> None:
+    for candidate in (path, Path(f"{path}-shm"), Path(f"{path}-wal")):
+        if candidate.exists():
+            candidate.unlink()
+
+
 @pytest.fixture(scope="session")
 def client() -> TestClient:
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    _cleanup_sqlite_files(DB_PATH)
     if UPLOAD_PATH.exists():
         shutil.rmtree(UPLOAD_PATH)
 
@@ -28,7 +33,6 @@ def client() -> TestClient:
     with TestClient(app) as test_client:
         yield test_client
 
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    _cleanup_sqlite_files(DB_PATH)
     if UPLOAD_PATH.exists():
         shutil.rmtree(UPLOAD_PATH)

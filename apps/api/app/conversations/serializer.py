@@ -112,6 +112,8 @@ def serialize_team_run(run: TeamRunModel) -> dict:
         "plan_status": run.plan_status,
         "requested_by": run.requested_by,
         "request_text": run.request_text,
+        "output_type": run.output_type,
+        "document_provider": run.document_provider,
         "selected_agents": list(run.selected_agents or []),
         "source_file_ids": list(run.source_file_ids or []),
         "source_ir_summary": run.source_ir_summary,

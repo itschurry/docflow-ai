@@ -40,6 +40,15 @@ class Settings:
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     anthropic_model: str = os.getenv(
         "ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+    anthropic_skills_enabled: bool = os.getenv(
+        "ANTHROPIC_SKILLS_ENABLED", "true").lower() == "true"
+    anthropic_skills_default_provider: bool = os.getenv(
+        "ANTHROPIC_SKILLS_DEFAULT_PROVIDER", "true").lower() == "true"
+    anthropic_skills_allow_fallback: bool = os.getenv(
+        "ANTHROPIC_SKILLS_ALLOW_FALLBACK", "true").lower() == "true"
+    anthropic_skills_timeout_seconds: int = int(
+        os.getenv("ANTHROPIC_SKILLS_TIMEOUT_SECONDS", "90")
+    )
     execution_backend: str = os.getenv("EXECUTION_BACKEND", "inline")
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     queue_max_retries: int = int(os.getenv("QUEUE_MAX_RETRIES", "3"))

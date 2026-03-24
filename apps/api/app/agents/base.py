@@ -88,7 +88,7 @@ class BaseAgent(ABC):
             "반드시 아래 JSON 객체 하나만 출력하세요 (설명 금지):\n"
             "{\n"
             '  "visible_message": "텔레그램에 바로 게시 가능한 자연스러운 발화",\n'
-            '  "suggested_next_agent": "planner|writer|critic|coder|reviewer|manager 또는 null",\n'
+            '  "suggested_next_agent": "planner|writer|critic|reviewer|manager 또는 null",\n'
             '  "handoff_reason": "다음 에이전트를 제안한 이유",\n'
             '  "task_status": "현재 작업 상태 문자열",\n'
             '  "done": false,\n'
@@ -352,10 +352,9 @@ def _fallback_status_message(handle: str, task_status: str | None) -> str:
     if status and status not in {"in_progress", "done"} and not _looks_like_json_blob(status):
         return status
     labels = {
-        "planner": "PM이 작업 기준을 정리 중입니다.",
-        "writer": "Writer가 초안을 작성 중입니다.",
-        "critic": "Critic이 검토 중입니다.",
-        "manager": "Manager가 최종 정리 중입니다.",
-        "coder": "Coder가 기술 내용을 정리 중입니다.",
+        "planner": "기획 리드가 작업 기준을 정리 중입니다.",
+        "writer": "작성 담당이 초안을 작성 중입니다.",
+        "critic": "검토 담당이 검토 중입니다.",
+        "manager": "최종 승인이 마감 중입니다.",
     }
     return labels.get(handle, "에이전트가 작업 중입니다.")
