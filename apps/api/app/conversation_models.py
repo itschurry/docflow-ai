@@ -198,6 +198,7 @@ class TeamRunModel(Base):
     selected_agents: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     source_file_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     source_ir_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    auto_review_max_rounds: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     final_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("conversation_artifacts.id", ondelete="SET NULL"),

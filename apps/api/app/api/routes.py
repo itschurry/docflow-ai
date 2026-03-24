@@ -81,6 +81,8 @@ from app.team_runtime.service import TeamRunService
 router = APIRouter()
 
 AUTO_REVIEW_MAX_ROUNDS = 2
+AUTO_REVIEW_MAX_ROUNDS_MIN = 1
+AUTO_REVIEW_MAX_ROUNDS_MAX = 6
 TEAM_EXPORT_PROJECT_NAME = "Agent Team Exports"
 WEB_UPLOAD_PROJECT_NAME = "Web Workspace Uploads"
 AUTO_REVIEW_REJECT_KEYWORDS = (
@@ -162,6 +164,43 @@ def _infer_output_type_from_request_text(request_text: str | None) -> str:
     if any(keyword in lowered for keyword in SHEET_REQUEST_KEYWORDS):
         return "xlsx"
     return "docx"
+
+
+def _normalize_auto_review_max_rounds(value: object | None) -> int:
+    if value is None:
+        return AUTO_REVIEW_MAX_ROUNDS
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"auto_review_max_rounds must be an integer between "
+                f"{AUTO_REVIEW_MAX_ROUNDS_MIN} and {AUTO_REVIEW_MAX_ROUNDS_MAX}"
+            ),
+        )
+    if normalized < AUTO_REVIEW_MAX_ROUNDS_MIN or normalized > AUTO_REVIEW_MAX_ROUNDS_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"auto_review_max_rounds must be between "
+                f"{AUTO_REVIEW_MAX_ROUNDS_MIN} and {AUTO_REVIEW_MAX_ROUNDS_MAX}"
+            ),
+        )
+    return normalized
+
+
+def _run_auto_review_max_rounds(run: conversation_models.TeamRunModel | None) -> int:
+    if not run:
+        return AUTO_REVIEW_MAX_ROUNDS
+    value = getattr(run, "auto_review_max_rounds", None)
+    try:
+        rounds = int(value)
+    except (TypeError, ValueError):
+        rounds = AUTO_REVIEW_MAX_ROUNDS
+    if rounds < AUTO_REVIEW_MAX_ROUNDS_MIN or rounds > AUTO_REVIEW_MAX_ROUNDS_MAX:
+        return AUTO_REVIEW_MAX_ROUNDS
+    return rounds
 
 
 def _infer_task_kind(artifact_goal: str) -> str:
@@ -1215,6 +1254,7 @@ def create_web_team_run(
     mode = "team-autonomous"
     oversight_mode = _normalize_oversight_mode(payload.get("oversight_mode"))
     output_type = _normalize_output_type(payload.get("output_type"))
+    auto_review_max_rounds = _normalize_auto_review_max_rounds(payload.get("auto_review_max_rounds"))
     valid = {a["handle"] for a in orchestrator.list_agents_info()}
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
@@ -1254,6 +1294,7 @@ def create_web_team_run(
         selected_agents=selected,
         source_file_ids=[str(item.id) for item in source_files],
         source_ir_summary=source_ir_summary,
+        auto_review_max_rounds=auto_review_max_rounds,
         status="idle",
     )
     _ensure_team_run_sessions(team_svc, run)
@@ -1605,6 +1646,7 @@ async def send_web_team_run_request(
     text = str(payload.get("text") or "").strip()
     sender_name = str(payload.get("sender_name") or "web_user").strip() or "web_user"
     output_type = payload.get("output_type")
+    auto_review_max_rounds = payload.get("auto_review_max_rounds")
     raw_source_file_ids = payload.get("source_file_ids")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -1620,6 +1662,8 @@ async def send_web_team_run_request(
         run.output_type = _normalize_output_type(output_type)
     elif not str(run.request_text or "").strip():
         run.output_type = _infer_output_type_from_request_text(text)
+    if auto_review_max_rounds is not None:
+        run.auto_review_max_rounds = _normalize_auto_review_max_rounds(auto_review_max_rounds)
 
     conv = db.get(conversation_models.ConversationModel, run.conversation_id)
     if not conv:
@@ -2035,6 +2079,9 @@ async def update_web_team_task(
             raise HTTPException(status_code=400, detail="Task does not have review notes")
 
         if action == "approve_review":
+            if updated.claim_status == "claimed":
+                team_svc.release_task_claim(updated.id, reset_status="done")
+            updated = team_svc.update_task(updated.id, status="done") or updated
             team_svc.create_activity(
                 team_run_id=updated.team_run_id,
                 task_id=updated.id,
@@ -2042,6 +2089,13 @@ async def update_web_team_task(
                 actor_handle=actor_handle,
                 target_handle=updated.owner_handle,
                 summary=f"{actor_handle}가 '{updated.title}' 검토를 승인했습니다.",
+            )
+            team_svc.create_activity(
+                team_run_id=updated.team_run_id,
+                task_id=updated.id,
+                event_type="task_completed",
+                actor_handle=updated.owner_handle,
+                summary=f"{updated.owner_handle}가 '{updated.title}' 작업을 완료했습니다.",
             )
             final_task = _find_final_task(team_svc, run.id)
             if final_task:
@@ -2055,7 +2109,7 @@ async def update_web_team_task(
                     subject="검토 승인",
                     content=f"'{updated.title}' 검토가 승인되었습니다. 최종 산출물을 정리하세요.",
                 )
-            team_svc.update_run(updated.team_run_id, status="active")
+            _refresh_team_run_status(db, team_svc, updated.team_run_id)
             db.commit()
             await _run_team_scheduler(db, updated.team_run_id)
             refreshed_run = team_svc.get_run(updated.team_run_id)
@@ -2093,7 +2147,7 @@ async def update_web_team_task(
                 message_type="review_feedback",
                 subject="검토 반려로 재작업 필요",
                 content=f"'{updated.title}' 검토가 반려되었습니다. '{reopened_task.title}' 작업을 보강해 주세요.",
-            )
+        )
         team_svc.update_run(updated.team_run_id, status="active")
         db.commit()
         await _run_team_scheduler(db, updated.team_run_id)
@@ -3525,6 +3579,42 @@ def _is_review_gate_task(task: conversation_models.TeamTaskModel) -> bool:
     return task.artifact_goal == "review_notes"
 
 
+def _reconcile_review_gate_tasks(
+    *,
+    team_svc: TeamRunService,
+    run: conversation_models.TeamRunModel,
+    tasks: list[conversation_models.TeamTaskModel],
+    artifacts_by_task: dict[str, list[conversation_models.ConversationArtifactModel]],
+    activity_by_task: dict[str, list[conversation_models.TeamActivityEventModel]],
+) -> bool:
+    changed = False
+    for task in tasks:
+        if not _is_review_gate_task(task):
+            continue
+        snapshot = _review_snapshot(
+            task,
+            artifacts_by_task.get(str(task.id), []),
+            activity_by_task.get(str(task.id), []),
+        )
+        if snapshot["review_state"] in {"approved", "rejected"} and task.status != "done":
+            if task.claim_status == "claimed":
+                team_svc.release_task_claim(task.id, reset_status="done")
+            team_svc.update_task(task.id, status="done")
+            team_svc.create_activity(
+                team_run_id=run.id,
+                task_id=task.id,
+                event_type="state_reconciled",
+                actor_handle="system",
+                target_handle=task.owner_handle,
+                summary=(
+                    f"검토 상태 불일치를 자동 복구했습니다: "
+                    f"review_state={snapshot['review_state']}인데 task.status={task.status}라 done으로 정합화."
+                ),
+            )
+            changed = True
+    return changed
+
+
 def _dependency_review_satisfied(
     *,
     run: conversation_models.TeamRunModel,
@@ -3725,7 +3815,7 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     payload["run"]["leader_session_id"] = str(leader_session.id) if leader_session else None
     payload["run"]["active_sessions"] = len([session for session in sessions if session.status != "offline"])
     payload["run"]["workflow_preset"] = _run_workflow_preset(run)
-    payload["run"]["auto_review_max_rounds"] = AUTO_REVIEW_MAX_ROUNDS
+    payload["run"]["auto_review_max_rounds"] = _run_auto_review_max_rounds(run)
     payload["run"]["auto_review_rounds_used"] = auto_review_rounds_used
     return payload
 
@@ -4423,13 +4513,14 @@ def _escalate_auto_review_to_manual(
     conv = conv_svc.get_conversation(run.conversation_id) if run.conversation_id else None
     team_svc.update_task(review_task.id, status="review")
     team_svc.update_run(run.id, status="awaiting_review")
+    rounds_cap = _run_auto_review_max_rounds(run)
     team_svc.create_activity(
         team_run_id=run.id,
         task_id=review_task.id,
         event_type="auto_review_escalated",
         actor_handle="manager",
         target_handle=review_task.owner_handle,
-        summary=f"자동 검토가 {AUTO_REVIEW_MAX_ROUNDS}회 반려 한도에 도달해 수동 검토 대기로 전환됐습니다.",
+        summary=f"자동 검토가 {rounds_cap}회 반려 한도에 도달해 수동 검토 대기로 전환됐습니다.",
         payload={
             "round": rounds_used,
             "summary": summary,
@@ -4533,7 +4624,8 @@ async def _maybe_auto_review_task(
         return
 
     rounds_used = _review_rejection_count(team_svc, run.id, task.id) + 1
-    if rounds_used > AUTO_REVIEW_MAX_ROUNDS:
+    rounds_cap = _run_auto_review_max_rounds(run)
+    if rounds_used > rounds_cap:
         _escalate_auto_review_to_manual(
             db,
             run,
@@ -4743,14 +4835,25 @@ def _refresh_team_run_status(db: Session, team_svc: TeamRunService, team_run_id:
     for event in activity:
         if event.task_id:
             activity_by_task.setdefault(str(event.task_id), []).append(event)
-    ready = _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task)
-    if run.status in {"done_with_risks", "awaiting_review"}:
+    if run.status == "done_with_risks":
         return
-    if tasks and all(task.status == "done" for task in tasks):
-        team_svc.update_run(run.id, status="done")
-    elif any(task.status == "blocked" for task in tasks):
-        team_svc.update_run(run.id, status="blocked")
-    elif run.oversight_mode == "manual" and any(
+    if _reconcile_review_gate_tasks(
+        team_svc=team_svc,
+        run=run,
+        tasks=tasks,
+        artifacts_by_task=artifacts_by_task,
+        activity_by_task=activity_by_task,
+    ):
+        db.flush()
+        tasks = team_svc.list_tasks(run.id)
+        activity = team_svc.list_activity(run.id, limit=240)
+        activity_by_task = {}
+        for event in activity:
+            if event.task_id:
+                activity_by_task.setdefault(str(event.task_id), []).append(event)
+
+    ready = _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task)
+    review_waiting = any(
         _review_snapshot(
             task,
             artifacts_by_task.get(str(task.id), []),
@@ -4758,7 +4861,12 @@ def _refresh_team_run_status(db: Session, team_svc: TeamRunService, team_run_id:
         )["review_state"] == "reviewed"
         for task in tasks
         if _is_review_gate_task(task)
-    ) and not ready:
+    )
+    if tasks and all(task.status == "done" for task in tasks):
+        team_svc.update_run(run.id, status="done")
+    elif any(task.status == "blocked" for task in tasks):
+        team_svc.update_run(run.id, status="blocked")
+    elif review_waiting and not ready:
         team_svc.update_run(run.id, status="awaiting_review")
     else:
         team_svc.update_run(run.id, status="active")

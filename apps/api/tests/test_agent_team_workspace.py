@@ -207,6 +207,42 @@ def test_team_run_request_bootstraps_board_and_activity(client):
     assert any(item["role"] == "leader" for item in board_resp.json()["sessions"])
 
 
+def test_team_run_auto_review_max_rounds_can_be_configured(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Round Config Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "auto_review_max_rounds": 4,
+        },
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run"]["id"]
+    assert created.json()["run"]["auto_review_max_rounds"] == 4
+
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "시장 조사 보고서를 작성해줘", "sender_name": "ceo", "auto_review_max_rounds": 5},
+    )
+    assert planned.status_code == 202
+    assert planned.json()["run"]["auto_review_max_rounds"] == 5
+
+
+def test_team_run_auto_review_max_rounds_validation(client):
+    _ensure_schema()
+    bad_create = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Bad Round Config Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "auto_review_max_rounds": 0,
+        },
+    )
+    assert bad_create.status_code == 400
+    assert "auto_review_max_rounds" in bad_create.text
+
+
 def test_team_run_bootstrap_exposes_sessions_and_inbox(client):
     _ensure_schema()
     created = client.post(
@@ -409,6 +445,7 @@ def test_team_run_review_actions_update_state_and_rerun_branch(client):
     approved_payload = approved.json()
     approved_task = next(item for item in approved_payload["tasks"] if item["id"] == critic_task["id"])
     assert approved_task["review_state"] == "approved"
+    assert approved_task["status"] == "done"
     assert approved_payload["run"]["status"] == "done"
     assert approved_payload["deliverable"]["artifact_type"] == "final"
     assert any(event["event_type"] == "review_approved" for event in approved_payload["activity"])
@@ -424,6 +461,51 @@ def test_team_run_review_actions_update_state_and_rerun_branch(client):
     assert rejected_task["review_state"] == "reviewed"
     assert rejected_payload["run"]["status"] == "awaiting_review"
     assert any(event["event_type"] == "review_rejected" for event in rejected_payload["activity"])
+
+
+def test_team_run_review_status_is_auto_reconciled_after_approval(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Review Reconcile Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "oversight_mode": "manual",
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "시장 동향 브리프를 작성해줘", "sender_name": "ceo"},
+    )
+    assert planned.status_code == 202
+
+    approved_plan = client.post(
+        f"/web/team-runs/{run_id}/plan/approve",
+        json={"actor_handle": "manager"},
+    )
+    assert approved_plan.status_code == 200
+    critic_task = next(task for task in approved_plan.json()["tasks"] if task["owner_handle"] == "critic")
+
+    approved = client.patch(
+        f"/web/tasks/{critic_task['id']}",
+        json={"action": "approve_review", "actor_handle": "manager"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["run"]["status"] == "done"
+
+    # Force an inconsistent state (review event approved, but task status moved back to review).
+    forced = client.patch(
+        f"/web/tasks/{critic_task['id']}",
+        json={"status": "review", "actor_handle": "planner"},
+    )
+    assert forced.status_code == 200
+    payload = forced.json()
+    refreshed = next(item for item in payload["tasks"] if item["id"] == critic_task["id"])
+    assert refreshed["review_state"] == "approved"
+    assert refreshed["status"] == "done"
+    assert payload["run"]["status"] == "done"
+    assert any(event["event_type"] == "state_reconciled" for event in payload["activity"])
 
 
 def test_team_run_manual_mode_waits_for_review_approval(client):
