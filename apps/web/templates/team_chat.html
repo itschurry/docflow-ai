@@ -72,7 +72,7 @@
       border-radius:12px;
       padding:10px 12px;
     }
-    .board-head { font-size:12px; color:var(--muted); margin-bottom:8px; }
+    .board-head { font-size:12px; color:var(--muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
     .board-columns { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); }
     .board-col { border:1px solid var(--line); border-radius:10px; background:#0d1522; padding:10px; }
     .board-col h4 { margin:0 0 8px 0; font-size:13px; }
@@ -107,8 +107,23 @@
     .task-detail-item { border:1px solid #263049; border-radius:10px; background:#101826; padding:8px 10px; }
     .task-detail-item-title { font-size:13px; font-weight:600; margin-bottom:4px; }
     .task-empty { font-size:12px; color:var(--muted); }
+    .task-form-grid { display:grid; gap:8px; }
+    .task-form-grid.two { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .task-form-grid.three { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+    .task-form-grid textarea { min-height:100px; }
+    .task-form-grid select[multiple] { min-height:110px; }
+    .task-form-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .task-create-box {
+      margin: 10px 16px 0 16px;
+      border:1px solid #3d5a39;
+      background:linear-gradient(180deg,#102015,#0c1710);
+      border-radius:12px;
+      padding:10px 12px;
+    }
     @media (max-width: 1100px) {
       .task-detail-grid { grid-template-columns:1fr; }
+      .task-form-grid.two,
+      .task-form-grid.three { grid-template-columns:1fr; }
     }
     .msg { margin:10px 0; border:1px solid var(--line); border-radius:12px; padding:10px 12px; max-width:900px; }
     .msg.user { margin-left:auto; background:var(--user); }
@@ -193,8 +208,28 @@
         <div class="progress-list" id="progressList"></div>
       </div>
       <div class="board-box" id="boardBox" style="display:none">
-        <div class="board-head"><b>작업 보드</b></div>
+        <div class="board-head"><b>작업 보드</b><button id="toggleCreateTaskBtn">새 작업 추가</button></div>
         <div class="board-columns" id="boardColumns"></div>
+      </div>
+      <div class="task-create-box" id="taskCreateBox" style="display:none">
+        <div class="board-head"><b>새 작업 추가</b></div>
+        <div class="task-form-grid three">
+          <input id="createTaskTitle" placeholder="작업 제목" />
+          <select id="createTaskOwner"></select>
+          <select id="createTaskGoal"></select>
+        </div>
+        <div class="task-form-grid three" style="margin-top:8px">
+          <input id="createTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
+          <select id="createTaskParent"></select>
+          <select id="createTaskDeps" multiple></select>
+        </div>
+        <div class="task-form-grid" style="margin-top:8px">
+          <textarea id="createTaskDescription" placeholder="작업 설명"></textarea>
+        </div>
+        <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="createTaskReview" type="checkbox" /> 리뷰 필요</label>
+        <div class="task-form-actions">
+          <button id="createTaskBtn">작업 생성</button>
+        </div>
       </div>
       <div class="task-detail-box" id="taskDetailBox" style="display:none">
         <div class="task-detail-head">
@@ -229,6 +264,30 @@
             <b>작업 이력</b>
             <div class="task-detail-list" id="taskDetailActivity"></div>
           </div>
+          <div class="task-detail-card">
+            <b>작업 정의 수정</b>
+            <div class="task-form-grid three">
+              <input id="editTaskTitle" placeholder="작업 제목" />
+              <select id="editTaskGoal"></select>
+              <input id="editTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
+            </div>
+            <div class="task-form-grid" style="margin-top:8px">
+              <textarea id="editTaskDescription" placeholder="작업 설명"></textarea>
+            </div>
+            <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px"><input id="editTaskReview" type="checkbox" /> 리뷰 필요</label>
+            <div class="task-form-actions">
+              <button id="saveTaskEditBtn">정의 저장</button>
+            </div>
+          </div>
+          <div class="task-detail-card">
+            <b>선행 작업 편집</b>
+            <div class="task-form-grid">
+              <select id="editTaskDeps" multiple></select>
+            </div>
+            <div class="task-form-actions">
+              <button id="saveTaskDepsBtn">의존성 저장</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="chat" id="chat"></div>
@@ -256,6 +315,17 @@
     const progressListEl = document.getElementById('progressList');
     const boardBoxEl = document.getElementById('boardBox');
     const boardColumnsEl = document.getElementById('boardColumns');
+    const toggleCreateTaskBtnEl = document.getElementById('toggleCreateTaskBtn');
+    const taskCreateBoxEl = document.getElementById('taskCreateBox');
+    const createTaskTitleEl = document.getElementById('createTaskTitle');
+    const createTaskOwnerEl = document.getElementById('createTaskOwner');
+    const createTaskGoalEl = document.getElementById('createTaskGoal');
+    const createTaskPriorityEl = document.getElementById('createTaskPriority');
+    const createTaskParentEl = document.getElementById('createTaskParent');
+    const createTaskDepsEl = document.getElementById('createTaskDeps');
+    const createTaskDescriptionEl = document.getElementById('createTaskDescription');
+    const createTaskReviewEl = document.getElementById('createTaskReview');
+    const createTaskBtnEl = document.getElementById('createTaskBtn');
     const taskDetailBoxEl = document.getElementById('taskDetailBox');
     const taskDetailTitleEl = document.getElementById('taskDetailTitle');
     const taskDetailMetaEl = document.getElementById('taskDetailMeta');
@@ -270,9 +340,18 @@
     const unblockTaskBtnEl = document.getElementById('unblockTaskBtn');
     const approveReviewBtnEl = document.getElementById('approveReviewBtn');
     const rejectReviewBtnEl = document.getElementById('rejectReviewBtn');
+    const editTaskTitleEl = document.getElementById('editTaskTitle');
+    const editTaskGoalEl = document.getElementById('editTaskGoal');
+    const editTaskPriorityEl = document.getElementById('editTaskPriority');
+    const editTaskDescriptionEl = document.getElementById('editTaskDescription');
+    const editTaskReviewEl = document.getElementById('editTaskReview');
+    const editTaskDepsEl = document.getElementById('editTaskDeps');
+    const saveTaskEditBtnEl = document.getElementById('saveTaskEditBtn');
+    const saveTaskDepsBtnEl = document.getElementById('saveTaskDepsBtn');
     let selectedTaskId = null;
     let currentBoardTasks = [];
     let currentTaskDetail = null;
+    let isCreateTaskOpen = false;
     let typingEl = null;
 
     function esc(s){ return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -428,10 +507,40 @@
       return badges.join('');
     }
 
+    function artifactGoalOptions(selected){
+      return ['brief', 'draft', 'review_notes', 'decision', 'final']
+        .map(goal => `<option value="${esc(goal)}" ${goal === selected ? 'selected' : ''}>${esc(goal)}</option>`)
+        .join('');
+    }
+
+    function selectedValues(selectEl){
+      return Array.from(selectEl.selectedOptions || []).map(option => option.value).filter(Boolean);
+    }
+
+    function renderTaskCreateForm(){
+      const isTeamRun = current?.kind === 'team_run';
+      taskCreateBoxEl.style.display = isTeamRun && isCreateTaskOpen ? '' : 'none';
+      toggleCreateTaskBtnEl.style.display = isTeamRun ? '' : 'none';
+      if(!isTeamRun) return;
+      const owners = Array.from(new Set((current.selected_agents || []).filter(Boolean)));
+      createTaskOwnerEl.innerHTML = owners.map(handle => {
+        return `<option value="${esc(handle)}">${esc(handleLabel(handle))}</option>`;
+      }).join('');
+      createTaskGoalEl.innerHTML = artifactGoalOptions('draft');
+      createTaskPriorityEl.value = createTaskPriorityEl.value || '50';
+      createTaskParentEl.innerHTML = [`<option value="">부모 작업 없음</option>`].concat(
+        currentBoardTasks.map(task => `<option value="${esc(task.id)}">${esc(task.title)}</option>`)
+      ).join('');
+      createTaskDepsEl.innerHTML = currentBoardTasks.map(task => {
+        return `<option value="${esc(task.id)}">${esc(task.title)} · ${esc(handleLabel(task.owner_handle))}</option>`;
+      }).join('');
+    }
+
     function renderBoard(tasks){
       currentBoardTasks = tasks || [];
       const statuses = ['todo', 'in_progress', 'review', 'blocked', 'done'];
       const titles = {todo:'Todo', in_progress:'In Progress', review:'Review', blocked:'Blocked', done:'Done'};
+      renderTaskCreateForm();
       if(!tasks?.length){
         boardBoxEl.style.display = 'none';
         boardColumnsEl.innerHTML = '';
@@ -471,6 +580,14 @@
         unblockTaskBtnEl.disabled = true;
         approveReviewBtnEl.disabled = true;
         rejectReviewBtnEl.disabled = true;
+        editTaskTitleEl.value = '';
+        editTaskGoalEl.innerHTML = artifactGoalOptions('draft');
+        editTaskPriorityEl.value = '';
+        editTaskDescriptionEl.value = '';
+        editTaskReviewEl.checked = false;
+        editTaskDepsEl.innerHTML = '';
+        saveTaskEditBtnEl.disabled = true;
+        saveTaskDepsBtnEl.disabled = true;
         return;
       }
       const task = payload.task;
@@ -498,6 +615,18 @@
       unblockTaskBtnEl.disabled = task.status !== 'blocked';
       approveReviewBtnEl.disabled = !reviewable;
       rejectReviewBtnEl.disabled = !reviewable;
+      editTaskTitleEl.value = task.title || '';
+      editTaskGoalEl.innerHTML = artifactGoalOptions(task.artifact_goal || 'draft');
+      editTaskPriorityEl.value = task.priority || 50;
+      editTaskDescriptionEl.value = task.description || '';
+      editTaskReviewEl.checked = Boolean(task.review_required);
+      const selectedDeps = new Set((task.depends_on_task_ids || []).map(String));
+      editTaskDepsEl.innerHTML = (payload.available_dependencies || []).map(item => {
+        const selected = selectedDeps.has(item.id) ? 'selected' : '';
+        return `<option value="${esc(item.id)}" ${selected}>${esc(item.title)} · ${esc(handleLabel(item.owner_handle))} · ${esc(item.status)}</option>`;
+      }).join('');
+      saveTaskEditBtnEl.disabled = false;
+      saveTaskDepsBtnEl.disabled = false;
       taskDetailDependenciesEl.innerHTML = (payload.dependencies || []).map(dep => {
         return `<div class="task-detail-item"><div class="task-detail-item-title">${esc(dep.title)}</div><div class="task-meta">${esc(handleLabel(dep.owner_handle))} · ${esc(dep.status)} · ${esc(dep.artifact_goal || '-')}</div></div>`;
       }).join('') || '<div class="task-empty">선행 작업 없음</div>';
@@ -546,6 +675,44 @@
         method:'PATCH',
         body: JSON.stringify(body),
       });
+      await applyTeamSnapshot(data);
+    }
+
+    async function updateSelectedTaskDependencies(){
+      if(current?.kind !== 'team_run' || !currentTaskDetail?.task?.id) return;
+      const data = await api(`/web/tasks/${currentTaskDetail.task.id}/dependencies`, {
+        method:'PUT',
+        body: JSON.stringify({
+          actor_handle: 'planner',
+          depends_on_task_ids: selectedValues(editTaskDepsEl),
+        }),
+      });
+      await applyTeamSnapshot(data);
+    }
+
+    async function createTask(){
+      if(current?.kind !== 'team_run') return;
+      const data = await api(`/web/team-runs/${current.id}/tasks`, {
+        method:'POST',
+        body: JSON.stringify({
+          actor_handle: 'planner',
+          title: createTaskTitleEl.value.trim(),
+          description: createTaskDescriptionEl.value.trim(),
+          owner_handle: createTaskOwnerEl.value,
+          artifact_goal: createTaskGoalEl.value,
+          priority: Number(createTaskPriorityEl.value || 50),
+          parent_task_id: createTaskParentEl.value || null,
+          depends_on_task_ids: selectedValues(createTaskDepsEl),
+          review_required: createTaskReviewEl.checked,
+        }),
+      });
+      createTaskTitleEl.value = '';
+      createTaskDescriptionEl.value = '';
+      createTaskPriorityEl.value = '50';
+      createTaskParentEl.value = '';
+      Array.from(createTaskDepsEl.options || []).forEach(option => { option.selected = false; });
+      createTaskReviewEl.checked = false;
+      isCreateTaskOpen = false;
       await applyTeamSnapshot(data);
     }
 
@@ -688,6 +855,11 @@
     document.getElementById('refresh').addEventListener('click', () => refresh().catch(e => alert(e.message)));
     document.getElementById('saveAgents').addEventListener('click', () => saveAgents().catch(e => alert(e.message)));
     document.getElementById('send').addEventListener('click', () => send().catch(e => alert(e.message)));
+    toggleCreateTaskBtnEl.addEventListener('click', () => {
+      isCreateTaskOpen = !isCreateTaskOpen;
+      renderTaskCreateForm();
+    });
+    createTaskBtnEl.addEventListener('click', () => createTask().catch(err => alert(err.message)));
     boardColumnsEl.addEventListener('click', (e) => {
       const card = e.target.closest('[data-task-id]');
       if(!card || current?.kind !== 'team_run') return;
@@ -718,6 +890,21 @@
     rejectReviewBtnEl.addEventListener('click', () => {
       if(!currentTaskDetail?.task) return;
       updateSelectedTask({action: 'reject_review', actor_handle: 'manager'}).catch(err => alert(err.message));
+    });
+    saveTaskEditBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTask({
+        actor_handle: 'planner',
+        title: editTaskTitleEl.value.trim(),
+        description: editTaskDescriptionEl.value.trim(),
+        artifact_goal: editTaskGoalEl.value,
+        priority: Number(editTaskPriorityEl.value || 50),
+        review_required: editTaskReviewEl.checked,
+      }).catch(err => alert(err.message));
+    });
+    saveTaskDepsBtnEl.addEventListener('click', () => {
+      if(!currentTaskDetail?.task) return;
+      updateSelectedTaskDependencies().catch(err => alert(err.message));
     });
     document.getElementById('copyDeliverable').addEventListener('click', async () => {
       const text = deliverableBodyEl.textContent || '';

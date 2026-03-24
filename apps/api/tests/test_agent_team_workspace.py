@@ -348,6 +348,104 @@ def test_team_run_review_actions_update_state_and_rerun_branch(client):
     assert any(event["event_type"] == "review_rejected" for event in rejected_payload["activity"])
 
 
+def test_team_run_can_create_manual_task_and_execute_when_ready(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Manual Task Run",
+            "selected_agents": ["planner", "writer", "critic", "manager", "coder"],
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "서비스 개요를 정리해줘", "sender_name": "ceo"},
+    )
+    assert planned.status_code == 202
+
+    created_task = client.post(
+        f"/web/team-runs/{run_id}/tasks",
+        json={
+            "title": "추가 표 작성",
+            "description": "요약 표를 만들고 핵심 포인트를 정리한다.",
+            "owner_handle": "coder",
+            "artifact_goal": "draft",
+            "priority": 80,
+            "review_required": False,
+            "depends_on_task_ids": [],
+        },
+    )
+    assert created_task.status_code == 201
+    payload = created_task.json()
+    added = next(task for task in payload["tasks"] if task["title"] == "추가 표 작성")
+    assert added["owner_handle"] == "coder"
+    assert added["status"] == "done"
+    assert any(event["event_type"] == "task_created" for event in payload["activity"])
+
+
+def test_team_run_rejects_dependency_cycle(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Cycle Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "보고서 초안을 만들어줘", "sender_name": "ceo"},
+    )
+    tasks = planned.json()["tasks"]
+    writer_task = next(task for task in tasks if task["owner_handle"] == "writer")
+    critic_task = next(task for task in tasks if task["owner_handle"] == "critic")
+
+    cycle = client.put(
+        f"/web/tasks/{writer_task['id']}/dependencies",
+        json={"depends_on_task_ids": [critic_task["id"]]},
+    )
+    assert cycle.status_code == 400
+    assert "cycle" in cycle.json()["detail"]
+
+
+def test_team_run_done_task_edit_reopens_branch_and_republishes(client):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "Edit Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "시장 브리프를 작성해줘", "sender_name": "ceo"},
+    )
+    board = planned.json()
+    writer_task = next(task for task in board["tasks"] if task["owner_handle"] == "writer")
+    final_before = board["deliverable"]["version"]
+
+    updated = client.patch(
+        f"/web/tasks/{writer_task['id']}",
+        json={
+            "title": writer_task["title"],
+            "description": "업데이트된 기준으로 내용을 다시 정리한다.",
+            "artifact_goal": writer_task["artifact_goal"],
+            "priority": writer_task["priority"],
+            "review_required": True,
+        },
+    )
+    assert updated.status_code == 200
+    payload = updated.json()
+    refreshed = next(task for task in payload["tasks"] if task["id"] == writer_task["id"])
+    assert refreshed["status"] == "done"
+    assert payload["deliverable"]["version"] > final_before
+    assert any(event["event_type"] == "task_reopened" for event in payload["activity"])
+
+
 @dataclass
 class _FakeBot:
     username: str

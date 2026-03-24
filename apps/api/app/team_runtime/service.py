@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import delete
 
 from app.conversation_models import (
     TeamActivityEventModel,
@@ -136,6 +137,31 @@ class TeamRunService:
         self.db.add(dep)
         self.db.flush()
         return dep
+
+    def replace_dependencies(
+        self,
+        *,
+        team_task_id: uuid.UUID,
+        depends_on_task_ids: list[uuid.UUID],
+    ) -> list[TeamTaskDependencyModel]:
+        self.db.execute(
+            delete(TeamTaskDependencyModel).where(
+                TeamTaskDependencyModel.team_task_id == team_task_id
+            )
+        )
+        created = []
+        seen: set[uuid.UUID] = set()
+        for depends_on_task_id in depends_on_task_ids:
+            if depends_on_task_id in seen:
+                continue
+            seen.add(depends_on_task_id)
+            created.append(
+                self.add_dependency(
+                    team_task_id=team_task_id,
+                    depends_on_task_id=depends_on_task_id,
+                )
+            )
+        return created
 
     def list_dependencies(self, team_run_id: uuid.UUID) -> list[TeamTaskDependencyModel]:
         ids = [

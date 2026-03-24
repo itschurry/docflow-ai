@@ -938,6 +938,80 @@ def get_web_team_run_activity(
     return {"items": [serialize_team_activity(event) for event in svc.list_activity(team_run_id, limit=120)]}
 
 
+@router.post("/web/team-runs/{team_run_id}/tasks", status_code=201)
+async def create_web_team_task(
+    team_run_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    run = team_svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+
+    actor_handle = str(payload.get("actor_handle") or "planner").strip().lower() or "planner"
+    title = str(payload.get("title") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    owner_handle = str(payload.get("owner_handle") or "").strip().lower()
+    artifact_goal = str(payload.get("artifact_goal") or "draft").strip().lower()
+    priority = int(payload.get("priority") or 50)
+    review_required = bool(payload.get("review_required", False))
+    parent_task_id = _coerce_optional_uuid(payload.get("parent_task_id"))
+    dependency_ids = _coerce_uuid_list(payload.get("depends_on_task_ids"))
+
+    if not title or not description or not owner_handle:
+        raise HTTPException(status_code=400, detail="title, description, owner_handle are required")
+    _validate_task_owner(run, owner_handle)
+    _validate_artifact_goal(artifact_goal)
+    if parent_task_id:
+        parent_task = team_svc.get_task(parent_task_id)
+        if not parent_task or parent_task.team_run_id != run.id:
+            raise HTTPException(status_code=400, detail="parent_task_id must belong to the same run")
+
+    task = team_svc.create_task(
+        team_run_id=run.id,
+        title=title,
+        description=description,
+        owner_handle=owner_handle,
+        artifact_goal=artifact_goal,
+        created_by_handle=actor_handle,
+        status="todo",
+        priority=priority,
+        parent_task_id=parent_task_id,
+        review_required=review_required,
+    )
+    _validate_dependency_ids(team_svc, run.id, task.id, dependency_ids)
+    if _creates_dependency_cycle(team_svc, run.id, task.id, dependency_ids):
+        raise HTTPException(status_code=400, detail="dependency cycle detected")
+    team_svc.replace_dependencies(team_task_id=task.id, depends_on_task_ids=dependency_ids)
+    team_svc.create_activity(
+        team_run_id=run.id,
+        task_id=task.id,
+        event_type="task_split" if parent_task_id else "task_created",
+        actor_handle=actor_handle,
+        target_handle=owner_handle,
+        summary=(
+            f"{actor_handle}가 '{title}' 하위 작업을 만들고 {owner_handle}에게 배정했습니다."
+            if parent_task_id
+            else f"{actor_handle}가 새 작업 '{title}'을 만들고 {owner_handle}에게 배정했습니다."
+        ),
+        payload={"depends_on_task_ids": [str(item) for item in dependency_ids]},
+    )
+
+    if _task_is_ready(team_svc, run.id, task.id):
+        team_svc.update_run(run.id, status="active")
+        db.commit()
+        await _run_team_scheduler(db, run.id)
+    else:
+        _refresh_team_run_status(team_svc, run.id)
+        db.commit()
+
+    refreshed_run = team_svc.get_run(run.id)
+    if not refreshed_run:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, refreshed_run)
+
+
 @router.get("/web/tasks/{task_id}", status_code=200)
 def get_web_team_task_detail(
     task_id: UUID,
@@ -1147,7 +1221,32 @@ async def update_web_team_task(
     selected_handles = set(run.selected_agents or [])
     owner_changed = False
     previous_owner = task.owner_handle
+    previous_status = task.status
+    material_change = False
     fields = {}
+    if "title" in payload:
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="title must not be empty")
+        fields["title"] = title
+        material_change = material_change or title != task.title
+    if "description" in payload:
+        description = str(payload.get("description") or "").strip()
+        if not description:
+            raise HTTPException(status_code=400, detail="description must not be empty")
+        fields["description"] = description
+        material_change = material_change or description != task.description
+    if "artifact_goal" in payload:
+        artifact_goal = str(payload.get("artifact_goal") or task.artifact_goal).strip().lower()
+        _validate_artifact_goal(artifact_goal)
+        fields["artifact_goal"] = artifact_goal
+        material_change = material_change or artifact_goal != task.artifact_goal
+    if "priority" in payload:
+        fields["priority"] = int(payload.get("priority") or task.priority)
+    if "review_required" in payload:
+        review_required = bool(payload.get("review_required"))
+        fields["review_required"] = review_required
+        material_change = material_change or review_required != task.review_required
     if "status" in payload:
         fields["status"] = str(payload.get("status") or task.status).strip().lower()
     if "owner_handle" in payload:
@@ -1247,6 +1346,42 @@ async def update_web_team_task(
             raise HTTPException(status_code=500, detail="Failed to refresh team run")
         return _build_team_board_snapshot(db, refreshed_run)
 
+    if material_change and previous_status == "done":
+        reopened = _reset_team_task_branch(
+            team_svc=team_svc,
+            run_id=updated.team_run_id,
+            task_id=updated.id,
+            include_descendants=True,
+        )
+        team_svc.create_activity(
+            team_run_id=updated.team_run_id,
+            task_id=updated.id,
+            event_type="task_updated",
+            actor_handle=actor_handle,
+            target_handle=updated.owner_handle,
+            summary=f"{actor_handle}가 '{updated.title}' 작업 정의를 수정했습니다.",
+        )
+        team_svc.create_activity(
+            team_run_id=updated.team_run_id,
+            task_id=updated.id,
+            event_type="task_reopened",
+            actor_handle=actor_handle,
+            target_handle=updated.owner_handle,
+            summary=f"{actor_handle}가 '{updated.title}' 작업을 다시 열고 후속 작업 {max(len(reopened) - 1, 0)}개를 함께 재개했습니다.",
+            payload={"reopened_task_ids": [str(item.id) for item in reopened]},
+        )
+        if _task_is_ready(team_svc, run.id, updated.id):
+            team_svc.update_run(updated.team_run_id, status="active")
+            db.commit()
+            await _run_team_scheduler(db, updated.team_run_id)
+        else:
+            _refresh_team_run_status(team_svc, updated.team_run_id)
+            db.commit()
+        refreshed_run = team_svc.get_run(updated.team_run_id)
+        if not refreshed_run:
+            raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        return _build_team_board_snapshot(db, refreshed_run)
+
     event_type = {
         "in_progress": "task_started",
         "blocked": "task_blocked",
@@ -1273,6 +1408,70 @@ async def update_web_team_task(
 
     db.commit()
     refreshed_run = team_svc.get_run(updated.team_run_id)
+    if not refreshed_run:
+        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+    return _build_team_board_snapshot(db, refreshed_run)
+
+
+@router.put("/web/tasks/{task_id}/dependencies", status_code=200)
+async def update_web_team_task_dependencies(
+    task_id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    team_svc = TeamRunService(db)
+    task = team_svc.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    run = team_svc.get_run(task.team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+
+    actor_handle = str(payload.get("actor_handle") or "planner").strip().lower() or "planner"
+    dependency_ids = _coerce_uuid_list(payload.get("depends_on_task_ids"))
+    _validate_dependency_ids(team_svc, run.id, task.id, dependency_ids)
+    if _creates_dependency_cycle(team_svc, run.id, task.id, dependency_ids):
+        raise HTTPException(status_code=400, detail="dependency cycle detected")
+
+    previous_status = task.status
+    team_svc.replace_dependencies(team_task_id=task.id, depends_on_task_ids=dependency_ids)
+    team_svc.create_activity(
+        team_run_id=run.id,
+        task_id=task.id,
+        event_type="task_dependency_updated",
+        actor_handle=actor_handle,
+        target_handle=task.owner_handle,
+        summary=f"{actor_handle}가 '{task.title}' 선행 작업 구성을 변경했습니다.",
+        payload={"depends_on_task_ids": [str(item) for item in dependency_ids]},
+    )
+
+    if previous_status == "done":
+        reopened = _reset_team_task_branch(
+            team_svc=team_svc,
+            run_id=run.id,
+            task_id=task.id,
+            include_descendants=True,
+        )
+        team_svc.create_activity(
+            team_run_id=run.id,
+            task_id=task.id,
+            event_type="task_reopened",
+            actor_handle=actor_handle,
+            target_handle=task.owner_handle,
+            summary=f"{actor_handle}가 '{task.title}' 작업을 다시 열고 후속 작업 {max(len(reopened) - 1, 0)}개를 함께 재개했습니다.",
+            payload={"reopened_task_ids": [str(item.id) for item in reopened]},
+        )
+
+    if _task_is_ready(team_svc, run.id, task.id):
+        team_svc.update_run(run.id, status="active")
+        db.commit()
+        await _run_team_scheduler(db, run.id)
+    else:
+        _refresh_team_run_status(team_svc, run.id)
+        db.commit()
+
+    refreshed_run = team_svc.get_run(run.id)
     if not refreshed_run:
         raise HTTPException(status_code=500, detail="Failed to refresh team run")
     return _build_team_board_snapshot(db, refreshed_run)
@@ -1692,6 +1891,11 @@ def _build_team_task_detail(
         "conversation": serialize_conversation(conv) if conv else None,
         "task": task_snapshot,
         "dependencies": dependency_items,
+        "available_dependencies": [
+            serialize_team_task(item)
+            for item in tasks
+            if item.id != task.id
+        ],
         "activity": [
             serialize_team_activity(event)
             for event in activity_by_task.get(str(task.id), [])
@@ -1960,6 +2164,79 @@ def _refresh_team_run_status(team_svc: TeamRunService, team_run_id: uuid.UUID) -
         team_svc.update_run(run.id, status="blocked")
     else:
         team_svc.update_run(run.id, status="active")
+
+
+def _coerce_optional_uuid(value: object | None) -> uuid.UUID | None:
+    if value in (None, "", "null"):
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))
+
+
+def _coerce_uuid_list(value: object | None) -> list[uuid.UUID]:
+    if not value:
+        return []
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail="depends_on_task_ids must be a list")
+    result = []
+    for item in value:
+        result.append(_coerce_optional_uuid(item))
+    return [item for item in result if item is not None]
+
+
+def _validate_task_owner(run: conversation_models.TeamRunModel, owner_handle: str) -> None:
+    if run.selected_agents and owner_handle not in set(run.selected_agents):
+        raise HTTPException(status_code=400, detail="owner_handle must be in selected_agents")
+
+
+def _validate_artifact_goal(artifact_goal: str) -> None:
+    if artifact_goal not in {"brief", "draft", "review_notes", "decision", "final"}:
+        raise HTTPException(status_code=400, detail="invalid artifact_goal")
+
+
+def _validate_dependency_ids(
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+    task_id: uuid.UUID,
+    dependency_ids: list[uuid.UUID],
+) -> None:
+    tasks = {task.id: task for task in team_svc.list_tasks(run_id)}
+    for dependency_id in dependency_ids:
+        if dependency_id == task_id:
+            raise HTTPException(status_code=400, detail="task cannot depend on itself")
+        if dependency_id not in tasks:
+            raise HTTPException(status_code=400, detail="depends_on_task_ids must belong to the same run")
+
+
+def _creates_dependency_cycle(
+    team_svc: TeamRunService,
+    run_id: uuid.UUID,
+    task_id: uuid.UUID,
+    dependency_ids: list[uuid.UUID],
+) -> bool:
+    deps_by_task: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for dep in team_svc.list_dependencies(run_id):
+        if dep.team_task_id == task_id:
+            continue
+        deps_by_task.setdefault(dep.team_task_id, set()).add(dep.depends_on_task_id)
+    deps_by_task[task_id] = set(dependency_ids)
+
+    seen: set[uuid.UUID] = set()
+    queue = list(dependency_ids)
+    while queue:
+        current = queue.pop(0)
+        if current == task_id:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        queue.extend(item for item in deps_by_task.get(current, set()) if item not in seen)
+    return False
+
+
+def _task_is_ready(team_svc: TeamRunService, run_id: uuid.UUID, task_id: uuid.UUID) -> bool:
+    return any(task.id == task_id for task in team_svc.ready_tasks(run_id))
 
 
 def _task_has_review_notes(
