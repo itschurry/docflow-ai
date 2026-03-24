@@ -19,7 +19,7 @@ class CreateProjectResponse(BaseModel):
 
 class CreateJobRequest(BaseModel):
     request: str
-    output_types: list[Literal["report", "excel", "ppt"]
+    output_types: list[Literal["report", "excel", "ppt", "slide", "pptx", "budget", "xlsx"]
                        ] = Field(default_factory=list)
 
 

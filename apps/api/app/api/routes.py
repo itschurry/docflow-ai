@@ -57,6 +57,8 @@ from app.services.document_ir import render_ir_to_xlsx_bytes
 from app.services.document_ir import summarize_document_ir
 from app.services.job_dispatcher import dispatch_job
 from app.services.llm_router import get_llm_provider
+from app.services.openai_document_generator import OpenAIDocumentIRGenerator
+from app.services.openai_document_generator import openai_document_generation_available
 from app.services.planner_agent import PlannerAgent
 from app.adapters.telegram.handlers import process_update
 from app.adapters.telegram.dispatcher import DispatchResult
@@ -294,21 +296,92 @@ def _build_deliverable_ir(
         structured = _build_structured_deliverable(title, content)
         return build_slides_ir(title, structured.get("slide_outline") or [], sources=structured.get("sources") or [])
     if output_type == "xlsx":
-        rows = [["섹션", "내용"]]
-        current_section = ""
-        for raw in str(content or "").splitlines():
-            stripped = raw.strip()
-            if not stripped:
-                continue
-            if stripped.startswith("## "):
-                current_section = stripped[3:].strip()
-                continue
-            if stripped.startswith(("- ", "* ")):
-                rows.append([current_section or "요약", stripped[2:].strip()])
-            else:
-                rows.append([current_section or "요약", stripped])
-        return build_sheet_ir_from_outline(title, rows, sheet_name="summary")
+        return _build_xlsx_ir_from_markdown(title, content)
     return build_word_ir_from_markdown(title, content)
+
+
+def _build_xlsx_ir_from_markdown(title: str, content: str) -> dict:
+    """Parse markdown content into a multi-sheet xlsx IR.
+    
+    Recognises ## or ### headings as sheet names, and pipe tables as row data.
+    Falls back to key-value rows for bullet/paragraph lines.
+    """
+    sheets: list[dict] = []
+    current_name = "요약"
+    current_rows: list[list[str]] = []
+
+    def flush():
+        nonlocal current_rows
+        if current_rows:
+            sheets.append({"name": current_name[:31], "rows": current_rows})
+        current_rows = []
+
+    def parse_table_row(line: str) -> list[str] | None:
+        if not line.startswith("|"):
+            return None
+        # skip markdown table separator rows like |---|:---:|---|
+        import re as _re
+        if _re.match(r'^[\|:\s\-]+$', line):
+            return None
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        return cells
+
+    for raw in str(content or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+
+        # Sheet-level heading: ## 시트: 이름 or ## 이름
+        if stripped.startswith("## ") or stripped.startswith("### "):
+            prefix = "## " if stripped.startswith("## ") else "### "
+            new_name = stripped[len(prefix):]
+            # strip "시트:" prefix if present
+            if new_name.startswith("시트:"):
+                new_name = new_name[3:].strip()
+            if new_name and new_name.strip("- #"):
+                flush()
+                current_name = new_name.strip()[:31]
+            continue
+
+        # Separator line
+        if stripped.startswith("---"):
+            continue
+
+        # Pipe table row (returns None for separator rows — skip both cases when line starts with |)
+        if stripped.startswith("|"):
+            table_row = parse_table_row(stripped)
+            if table_row is not None:
+                current_rows.append(table_row)
+            continue  # separator rows are also skipped
+
+        # Bullet → key/value
+        if stripped.startswith(("- ", "* ")):
+            text = stripped[2:].strip()
+            if ":" in text:
+                k, v = text.split(":", 1)
+                current_rows.append([k.strip(), v.strip()])
+            else:
+                current_rows.append([text])
+            continue
+
+        # H1 title — skip
+        if stripped.startswith("# "):
+            continue
+
+        # Plain text paragraph
+        if stripped:
+            current_rows.append([stripped])
+
+    flush()
+
+    if not sheets:
+        sheets = [{"name": "summary", "rows": [["내용"], [content[:500]]]}]
+
+    return {
+        "title": title,
+        "document_type": "sheet",
+        "sheets": sheets,
+    }
 
 
 def _has_active_ops_keys(db: Session) -> bool:
@@ -505,7 +578,10 @@ async def create_job(
         raise HTTPException(status_code=404, detail="Project not found")
 
     planner = PlannerAgent(provider=get_llm_provider())
-    plan: PlanResult = await planner.plan(payload.request, payload.output_types)
+    try:
+        plan: PlanResult = await planner.plan(payload.request, payload.output_types)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"문서 계획 생성에 실패했습니다. 잠시 후 다시 시도해 주세요. ({exc})") from exc
     now = now_utc()
 
     job = JobModel(
@@ -1354,7 +1430,7 @@ def claim_web_team_task(
     db.commit()
     run = team_svc.get_run(task.team_run_id)
     if not run:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, run)
 
 
@@ -1382,7 +1458,7 @@ def release_web_team_task_claim(
     db.commit()
     run = team_svc.get_run(task.team_run_id)
     if not run:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, run)
 
 
@@ -1390,6 +1466,7 @@ def release_web_team_task_claim(
 async def create_web_team_task(
     team_run_id: UUID,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     team_svc = TeamRunService(db)
@@ -1467,7 +1544,7 @@ async def create_web_team_task(
 
     refreshed_run = team_svc.get_run(run.id)
     if not refreshed_run:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, refreshed_run)
 
 
@@ -1522,6 +1599,7 @@ def update_web_team_run_agents(
 async def send_web_team_run_request(
     team_run_id: UUID,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     text = str(payload.get("text") or "").strip()
@@ -1623,7 +1701,6 @@ async def send_web_team_run_request(
         team_svc.update_run(run.id, status="active", plan_status="approved")
         db.commit()
         await _run_team_scheduler(db, run.id)
-        db.refresh(run)
         return _build_team_board_snapshot(db, run)
 
     team_svc.update_run(
@@ -1745,7 +1822,6 @@ async def send_web_team_run_request(
     )
     db.commit()
     await _run_team_scheduler(db, run.id)
-    db.refresh(run)
     return _build_team_board_snapshot(db, run)
 
 
@@ -1753,6 +1829,7 @@ async def send_web_team_run_request(
 async def approve_web_team_run_plan(
     team_run_id: UUID,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     team_svc = TeamRunService(db)
@@ -1782,7 +1859,7 @@ async def approve_web_team_run_plan(
     await _run_team_scheduler(db, run.id)
     refreshed = team_svc.get_run(run.id)
     if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, refreshed)
 
 
@@ -1822,7 +1899,7 @@ def reject_web_team_run_plan(
     db.commit()
     refreshed = team_svc.get_run(run.id)
     if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, refreshed)
 
 
@@ -1830,6 +1907,7 @@ def reject_web_team_run_plan(
 async def update_web_team_task(
     task_id: UUID,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     team_svc = TeamRunService(db)
@@ -1949,7 +2027,7 @@ async def update_web_team_task(
         await _run_team_scheduler(db, updated.team_run_id)
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
-            raise HTTPException(status_code=500, detail="Failed to refresh team run")
+            raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
         return _build_team_board_snapshot(db, refreshed_run)
 
     if action in {"approve_review", "reject_review"}:
@@ -1982,7 +2060,7 @@ async def update_web_team_task(
             await _run_team_scheduler(db, updated.team_run_id)
             refreshed_run = team_svc.get_run(updated.team_run_id)
             if not refreshed_run:
-                raise HTTPException(status_code=500, detail="Failed to refresh team run")
+                raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
             return _build_team_board_snapshot(db, refreshed_run)
 
         reopened = _reopen_review_branch(
@@ -2021,7 +2099,7 @@ async def update_web_team_task(
         await _run_team_scheduler(db, updated.team_run_id)
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
-            raise HTTPException(status_code=500, detail="Failed to refresh team run")
+            raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
         return _build_team_board_snapshot(db, refreshed_run)
 
     if material_change and previous_status == "done":
@@ -2058,7 +2136,7 @@ async def update_web_team_task(
             db.commit()
         refreshed_run = team_svc.get_run(updated.team_run_id)
         if not refreshed_run:
-            raise HTTPException(status_code=500, detail="Failed to refresh team run")
+            raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
         return _build_team_board_snapshot(db, refreshed_run)
 
     event_type = {
@@ -2088,7 +2166,7 @@ async def update_web_team_task(
     db.commit()
     refreshed_run = team_svc.get_run(updated.team_run_id)
     if not refreshed_run:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, refreshed_run)
 
 
@@ -2096,6 +2174,7 @@ async def update_web_team_task(
 async def update_web_team_task_dependencies(
     task_id: UUID,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     team_svc = TeamRunService(db)
@@ -2153,7 +2232,7 @@ async def update_web_team_task_dependencies(
 
     refreshed_run = team_svc.get_run(run.id)
     if not refreshed_run:
-        raise HTTPException(status_code=500, detail="Failed to refresh team run")
+        raise HTTPException(status_code=404, detail="팀 실행 정보를 찾을 수 없습니다")
     return _build_team_board_snapshot(db, refreshed_run)
 
 
@@ -2210,14 +2289,23 @@ def _extract_web_deliverable(
                 str(payload["content"] or "").strip(),
             )
         if payload.get("content"):
-            payload["structured_ir"] = _build_deliverable_ir(
-                title=run.title if run else "Deliverable",
-                content=str(payload["content"] or "").strip(),
-                run=run,
-            )
+            try:
+                payload["structured_ir"] = _build_deliverable_ir(
+                    title=run.title if run else "Deliverable",
+                    content=str(payload["content"] or "").strip(),
+                    run=run,
+                )
+            except Exception:
+                pass
         return payload
 
     if run:
+        # For done_with_risks runs, try final_artifact_id directly first
+        if run.status == "done_with_risks" and run.final_artifact_id:
+            artifact = db.get(conversation_models.ConversationArtifactModel, run.final_artifact_id)
+            if artifact and str(artifact.content or "").strip():
+                return to_payload(artifact)
+
         team_svc = TeamRunService(db)
         tasks = team_svc.list_tasks(run.id)
         final_task_ids = [task.id for task in tasks if task.artifact_goal == "final" and task.status == "done"]
@@ -2588,8 +2676,6 @@ def export_web_team_run_deliverable(
     export_format = _normalize_output_type(payload.get("format") or run.output_type)
     if export_format not in {"docx", "pptx", "xlsx"}:
         raise HTTPException(status_code=400, detail="format must be docx, xlsx, or pptx")
-    if export_format != run.output_type:
-        raise HTTPException(status_code=400, detail=f"format must match run output_type ({run.output_type})")
 
     deliverable = _extract_web_deliverable(db, run.conversation_id, run=run)
     if not deliverable or not str(deliverable.get("content") or "").strip():
@@ -2602,6 +2688,8 @@ def export_web_team_run_deliverable(
     document_ir = deliverable.get("structured_ir") or _build_deliverable_ir(title=title, content=content, run=run)
     extracted_text = extract_text_from_ir(document_ir) or _structured_deliverable_to_markdown(structured, content)
     generated_provider = "internal_fallback"
+    provider_chain: list[str] = []
+    last_provider_error: Exception | None = None
 
     if anthropic_skills_available():
         try:
@@ -2617,27 +2705,70 @@ def export_web_team_run_deliverable(
             filename = str(generated.get("filename") or f"{filename_base}.{export_format}")
             mime_type = str(generated.get("mime_type") or "")
             generated_provider = "claude_skills"
-        except Exception:
+            provider_chain.append("claude_skills")
+        except Exception as exc:
+            provider_chain.append("claude_skills_failed")
+            last_provider_error = exc
             if not settings.anthropic_skills_allow_fallback:
-                raise HTTPException(status_code=502, detail="Claude Skills export failed")
+                raise _provider_error_http_exception(stage="claude_skills_export", exc=exc)
             generated_provider = "internal_fallback"
         else:
             run.document_provider = generated_provider
             db.flush()
 
+    if generated_provider == "internal_fallback" and openai_document_generation_available():
+        try:
+            document_ir = OpenAIDocumentIRGenerator().generate_ir(
+                output_type=export_format,
+                title=title,
+                request_text=run.request_text,
+                content=content,
+                source_ir_summary=run.source_ir_summary,
+            )
+            generated_provider = "openai_ir"
+            provider_chain.append("openai_ir")
+        except Exception as exc:
+            provider_chain.append("openai_ir_failed")
+            last_provider_error = exc
+            generated_provider = "internal_fallback"
+
     if generated_provider == "internal_fallback":
-        if export_format == "docx":
-            file_bytes = render_ir_to_docx_bytes(document_ir)
-            filename = f"{filename_base}.docx"
-            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif export_format == "xlsx":
-            file_bytes = render_ir_to_xlsx_bytes(document_ir)
-            filename = f"{filename_base}.xlsx"
-            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        else:
-            file_bytes = render_ir_to_pptx_bytes(document_ir)
-            filename = f"{filename_base}.pptx"
-            mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        try:
+            if export_format == "docx":
+                file_bytes = render_ir_to_docx_bytes(document_ir)
+                filename = f"{filename_base}.docx"
+                mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif export_format == "xlsx":
+                file_bytes = render_ir_to_xlsx_bytes(document_ir)
+                filename = f"{filename_base}.xlsx"
+                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                file_bytes = render_ir_to_pptx_bytes(document_ir)
+                filename = f"{filename_base}.pptx"
+                mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        except Exception as exc:
+            if last_provider_error is not None:
+                raise _provider_error_http_exception(stage="document_generation", exc=last_provider_error)
+            raise _provider_error_http_exception(stage="document_render", exc=exc)
+        provider_chain.append("internal_fallback")
+        run.document_provider = generated_provider
+        db.flush()
+    elif generated_provider == "openai_ir":
+        try:
+            if export_format == "docx":
+                file_bytes = render_ir_to_docx_bytes(document_ir)
+                filename = f"{filename_base}.docx"
+                mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif export_format == "xlsx":
+                file_bytes = render_ir_to_xlsx_bytes(document_ir)
+                filename = f"{filename_base}.xlsx"
+                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                file_bytes = render_ir_to_pptx_bytes(document_ir)
+                filename = f"{filename_base}.pptx"
+                mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        except Exception as exc:
+            raise _provider_error_http_exception(stage="openai_ir_render", exc=exc)
         run.document_provider = generated_provider
         db.flush()
 
@@ -2663,6 +2794,7 @@ def export_web_team_run_deliverable(
         "download_path": f"/api/files/{file_row.id}/download",
         "format": export_format,
         "provider": generated_provider,
+        "provider_chain": provider_chain,
     }
 
 
@@ -2684,6 +2816,35 @@ def _looks_like_jsonish_text(text: str | None) -> bool:
 
 def _normalize_text_block(text: str | None) -> str:
     return " ".join(str(text or "").split()).strip()
+
+
+def _provider_error_http_exception(*, stage: str, exc: Exception) -> HTTPException:
+    status_code = getattr(exc, "status_code", None)
+    lowered = str(exc).lower()
+    if isinstance(status_code, int) and status_code in {429}:
+        return HTTPException(
+            status_code=429,
+            detail={"error_code": f"{stage}_rate_limited", "retryable": True, "message": str(exc)},
+        )
+    if "rate limit" in lowered or "too many requests" in lowered or "quota" in lowered:
+        return HTTPException(
+            status_code=429,
+            detail={"error_code": f"{stage}_rate_limited", "retryable": True, "message": str(exc)},
+        )
+    if isinstance(status_code, int) and status_code in {500, 502, 503, 504, 529}:
+        return HTTPException(
+            status_code=503,
+            detail={"error_code": f"{stage}_upstream_unavailable", "retryable": True, "message": str(exc)},
+        )
+    if any(token in lowered for token in ("timeout", "timed out", "connection", "unavailable", "overloaded")):
+        return HTTPException(
+            status_code=503,
+            detail={"error_code": f"{stage}_upstream_unavailable", "retryable": True, "message": str(exc)},
+        )
+    return HTTPException(
+        status_code=502,
+        detail={"error_code": f"{stage}_failed", "retryable": False, "message": str(exc)},
+    )
 
 
 def _is_status_only_artifact(
@@ -4248,6 +4409,74 @@ def _publish_done_with_risks(
     return artifact
 
 
+def _escalate_auto_review_to_manual(
+    db: Session,
+    run: conversation_models.TeamRunModel,
+    review_task: conversation_models.TeamTaskModel,
+    *,
+    summary: str,
+    risk_summary: str,
+    rounds_used: int,
+) -> None:
+    conv_svc = ConversationService(db)
+    team_svc = TeamRunService(db)
+    conv = conv_svc.get_conversation(run.conversation_id) if run.conversation_id else None
+    team_svc.update_task(review_task.id, status="review")
+    team_svc.update_run(run.id, status="awaiting_review")
+    team_svc.create_activity(
+        team_run_id=run.id,
+        task_id=review_task.id,
+        event_type="auto_review_escalated",
+        actor_handle="manager",
+        target_handle=review_task.owner_handle,
+        summary=f"자동 검토가 {AUTO_REVIEW_MAX_ROUNDS}회 반려 한도에 도달해 수동 검토 대기로 전환됐습니다.",
+        payload={
+            "round": rounds_used,
+            "summary": summary,
+            "risk_summary": risk_summary,
+        },
+    )
+    _create_team_inbox_message(
+        team_svc,
+        run,
+        from_handle="manager",
+        to_handle="manager",
+        related_task_id=review_task.id,
+        message_type="review_feedback",
+        subject="수동 승인 필요",
+        content=(
+            f"자동 검토 한도 도달로 수동 판단이 필요합니다.\n"
+            f"- 핵심 사유: {summary}\n"
+            f"- 남은 리스크: {risk_summary}"
+        ),
+    )
+    if conv:
+        participant = conv_svc.get_or_create_participant(
+            conversation_id=conv.id,
+            handle="manager",
+            type="agent",
+            display_name="manager",
+        )
+        conv_svc.create_message(
+            conversation_id=conv.id,
+            raw_text="자동 검토 한도에 도달해 수동 승인 대기로 전환했습니다.",
+            rendered_text="자동 검토 한도에 도달해 수동 승인 대기로 전환했습니다.",
+            message_type="agent",
+            participant_id=participant.id,
+            visible_message="자동 검토 한도에 도달해 수동 승인 대기로 전환했습니다.",
+            speaker_role="manager",
+            speaker_identity="manager",
+            task_status="수동 승인 대기",
+            done=False,
+            needs_user_input=True,
+            is_progress_turn=True,
+            is_agent_message=True,
+        )
+        conv.done = False
+        conv.status = "active"
+        conv.updated_at = now_utc()
+
+
 async def _maybe_auto_review_task(
     db: Session,
     run: conversation_models.TeamRunModel,
@@ -4305,24 +4534,13 @@ async def _maybe_auto_review_task(
 
     rounds_used = _review_rejection_count(team_svc, run.id, task.id) + 1
     if rounds_used > AUTO_REVIEW_MAX_ROUNDS:
-        final_artifact = _publish_done_with_risks(
+        _escalate_auto_review_to_manual(
             db,
             run,
             task,
             summary=decision["summary"],
             risk_summary=decision["risk_summary"],
-            draft_bodies=decision["draft_bodies"],
-            review_bodies=decision["review_bodies"],
             rounds_used=rounds_used - 1,
-        )
-        team_svc.create_activity(
-            team_run_id=run.id,
-            task_id=task.id,
-            event_type="final_published",
-            actor_handle="manager",
-            target_handle=task.owner_handle,
-            summary=f"자동 검토가 {AUTO_REVIEW_MAX_ROUNDS}회 재작업 후 종료되어 리스크 포함 최종본으로 마감됐습니다.",
-            payload={"artifact_id": str(final_artifact.id)} if final_artifact else None,
         )
         db.commit()
         return
@@ -4369,6 +4587,19 @@ async def _maybe_auto_review_task(
         )
     team_svc.update_run(run.id, status="active")
     db.commit()
+
+
+async def _bg_run_scheduler(team_run_id: uuid.UUID) -> None:
+    """Background-safe scheduler wrapper: creates its own DB session so the
+    HTTP response can be returned immediately while AI tasks run asynchronously."""
+    db = SessionLocal()
+    try:
+        await _run_team_scheduler(db, team_run_id)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+    finally:
+        db.close()
 
 
 async def _run_team_scheduler(
@@ -4513,7 +4744,7 @@ def _refresh_team_run_status(db: Session, team_svc: TeamRunService, team_run_id:
         if event.task_id:
             activity_by_task.setdefault(str(event.task_id), []).append(event)
     ready = _eligible_ready_tasks(team_svc, run, artifacts_by_task, activity_by_task)
-    if run.status == "done_with_risks":
+    if run.status in {"done_with_risks", "awaiting_review"}:
         return
     if tasks and all(task.status == "done" for task in tasks):
         team_svc.update_run(run.id, status="done")

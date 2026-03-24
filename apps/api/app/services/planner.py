@@ -15,10 +15,10 @@ def build_plan(output_types: Sequence[str]) -> PlanResult:
     if "report" in output_types or not output_types:
         tasks.extend(["generate_report_outline",
                      "generate_report_draft", "review_report"])
-    if "excel" in output_types:
+    if any(t in output_types for t in ("excel", "budget", "xlsx")):
         tasks.extend(
             ["extract_budget_items", "run_budget_rules", "generate_xlsx"])
-    if "ppt" in output_types:
+    if any(t in output_types for t in ("ppt", "pptx", "slide")):
         tasks.extend(["generate_slide_outline",
                      "generate_slide_body", "generate_ppt"])
 

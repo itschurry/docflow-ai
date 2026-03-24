@@ -1,17 +1,22 @@
 from io import BytesIO
 
 from docx import Document
+from docx.oxml.ns import qn
 from openpyxl import Workbook
 from pptx import Presentation
 
-from app.services.document_ir import render_ir_to_docx_bytes
-from app.services.document_ir import render_ir_to_pptx_bytes
-from app.services.document_ir import render_ir_to_xlsx_bytes
+from app.services.document_ir import (
+    _apply_korean_font,
+    render_ir_to_docx_bytes,
+    render_ir_to_pptx_bytes,
+    render_ir_to_xlsx_bytes,
+)
 
 
 def generate_report_docx(title: str, body_text: str) -> bytes:
     """Convert markdown-formatted body_text to a styled DOCX document."""
     doc = Document()
+    _apply_korean_font(doc)
     doc.add_heading(title, 0)
 
     for line in body_text.splitlines():

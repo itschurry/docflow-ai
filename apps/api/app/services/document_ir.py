@@ -6,8 +6,35 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font as XlFont, PatternFill, Alignment
 from pptx import Presentation
+from pptx.util import Pt as PptPt
+
+
+# Korean office font — available on Windows (Malgun Gothic) with a fallback
+# chain so the file renders correctly on any Korean Windows PC.
+_KO_FONT_MAJOR = "맑은 고딕"   # Malgun Gothic — Korean Windows standard
+_KO_FONT_MINOR = "맑은 고딕"
+
+
+def _apply_korean_font(doc: Document) -> None:
+    """Set Korean-compatible default font on Normal style and Heading styles."""
+    for style_name in ("Normal", "Heading 1", "Heading 2", "Heading 3",
+                       "List Bullet", "List Number", "Table Grid"):
+        try:
+            style = doc.styles[style_name]
+        except KeyError:
+            continue
+        style.font.name = _KO_FONT_MAJOR
+        # Set East-Asian font via XML so Korean glyphs use the right typeface
+        rpr = style.element.get_or_add_rPr()
+        rFonts = rpr.get_or_add_rFonts()
+        rFonts.set(qn("w:eastAsia"), _KO_FONT_MAJOR)
+        rFonts.set(qn("w:hAnsi"), _KO_FONT_MAJOR)
+        rFonts.set(qn("w:ascii"), _KO_FONT_MAJOR)
 
 
 def build_word_ir_from_markdown(title: str, body_text: str) -> dict[str, Any]:
@@ -209,6 +236,7 @@ def summarize_document_ir(ir: dict[str, Any]) -> str:
 
 def render_ir_to_docx_bytes(ir: dict[str, Any]) -> bytes:
     doc = Document()
+    _apply_korean_font(doc)
     title = str(ir.get("title") or "Document").strip() or "Document"
     doc.add_heading(title, 0)
     document_type = str(ir.get("document_type") or "word")
@@ -262,6 +290,17 @@ def render_ir_to_docx_bytes(ir: dict[str, Any]) -> bytes:
     return stream.getvalue()
 
 
+def _apply_korean_font_xlsx(wb: Workbook) -> None:
+    """Apply Korean font to all cells in all sheets of a workbook."""
+    ko_font = XlFont(name=_KO_FONT_MAJOR)
+    header_font = XlFont(name=_KO_FONT_MAJOR, bold=True)
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    cell.font = ko_font
+
+
 def render_ir_to_xlsx_bytes(ir: dict[str, Any]) -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -308,8 +347,21 @@ def render_ir_to_xlsx_bytes(ir: dict[str, Any]) -> bytes:
             src.append([item])
 
     stream = BytesIO()
+    _apply_korean_font_xlsx(wb)
     wb.save(stream)
     return stream.getvalue()
+    """Set Korean font on a pptx run element."""
+    from pptx.oxml.ns import qn as pqn
+    from lxml import etree
+    rPr = run._r
+    # Set latin and eastAsian font
+    for tag, val in (("a:latin", _KO_FONT_MAJOR), ("a:ea", _KO_FONT_MAJOR)):
+        existing = rPr.find(tag, rPr.nsmap) if hasattr(rPr, 'nsmap') else None
+        if existing is None:
+            el = etree.SubElement(rPr, tag.split(":")[-1])
+            el.set("typeface", val)
+        else:
+            existing.set("typeface", val)
 
 
 def render_ir_to_pptx_bytes(ir: dict[str, Any]) -> bytes:
@@ -318,24 +370,45 @@ def render_ir_to_pptx_bytes(ir: dict[str, Any]) -> bytes:
 
     title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
-    slide.shapes.title.text = title
-    slide.placeholders[1].text = "DocFlow AI generated draft"
+    if slide.shapes.title:
+        slide.shapes.title.text = title
+        _set_pptx_shape_font(slide.shapes.title, _KO_FONT_MAJOR)
+    if len(slide.placeholders) > 1:
+        slide.placeholders[1].text = "DocFlow AI 생성 문서"
+        _set_pptx_shape_font(slide.placeholders[1], _KO_FONT_MAJOR)
 
     slides = _coerce_ir_to_slide_outline(ir)
     bullet_layout = prs.slide_layouts[1]
     for item in slides:
         s = prs.slides.add_slide(bullet_layout)
-        s.shapes.title.text = item.get("title", "Untitled")
+        if s.shapes.title:
+            s.shapes.title.text = item.get("title", "Untitled")
+            _set_pptx_shape_font(s.shapes.title, _KO_FONT_MAJOR)
         body = s.shapes.placeholders[1].text_frame
         body.clear()
         for index, line in enumerate(item.get("bullets", [])):
             paragraph = body.paragraphs[0] if index == 0 else body.add_paragraph()
             paragraph.text = str(line)
             paragraph.level = 0
+        _set_pptx_shape_font(s.shapes.placeholders[1], _KO_FONT_MAJOR)
 
     stream = BytesIO()
     prs.save(stream)
     return stream.getvalue()
+
+
+def _set_pptx_shape_font(shape, font_name: str) -> None:
+    """Apply a font name to all runs in every paragraph of a shape's text frame."""
+    try:
+        tf = shape.text_frame
+    except Exception:
+        return
+    for para in tf.paragraphs:
+        for run in para.runs:
+            try:
+                run.font.name = font_name
+            except Exception:
+                pass
 
 
 def extract_sources_from_text(body_text: str | None) -> list[str]:

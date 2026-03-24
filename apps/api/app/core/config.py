@@ -64,7 +64,7 @@ class Settings:
         "REVIEW_REQUIRED_KEYWORDS", "summary,conclusion")
     review_keyword_penalty: int = int(os.getenv("REVIEW_KEYWORD_PENALTY", "8"))
     review_required_threshold: int = int(
-        os.getenv("REVIEW_REQUIRED_THRESHOLD", "90"))
+        os.getenv("REVIEW_REQUIRED_THRESHOLD", "70"))
 
     # Telegram
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")

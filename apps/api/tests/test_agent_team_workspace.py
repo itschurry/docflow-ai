@@ -15,6 +15,8 @@ from app.core.time_utils import now_utc
 from app.orchestrator.engine import orchestrator
 from app.adapters.telegram.dispatcher import DispatchResult
 from app.agents.base import AgentResult
+from app.agents.base import BaseAgent
+from app.agents.base import AgentConfig
 from app.agents.base import _parse_agent_payload
 from app.api.routes import _build_structured_deliverable
 from app.api.routes import _build_done_with_risks_content
@@ -1189,6 +1191,106 @@ def test_team_run_can_export_selected_output_type(client):
         downloaded = client.get(export_payload["download_path"])
         assert downloaded.status_code == 200
         assert len(downloaded.content) > 0
+
+
+def test_export_falls_back_to_openai_ir_when_claude_unavailable(client, monkeypatch):
+    _ensure_schema()
+    created = client.post(
+        "/web/team-runs",
+        json={
+            "title": "OpenAI IR Export Run",
+            "selected_agents": ["planner", "writer", "critic", "manager"],
+            "oversight_mode": "auto",
+            "output_type": "pptx",
+        },
+    )
+    run_id = created.json()["run"]["id"]
+    planned = client.post(
+        f"/web/team-runs/{run_id}/requests",
+        json={"text": "청계천 발표자료를 작성해줘", "sender_name": "ceo"},
+    )
+    assert planned.status_code == 202
+
+    import app.api.routes as routes
+
+    class _DummyOpenAIGen:
+        def generate_ir(self, **kwargs):
+            return {
+                "document_type": "slides",
+                "title": "OpenAI IR Deck",
+                "slides": [
+                    {
+                        "index": 1,
+                        "title": "개요",
+                        "bullets": ["청계천 역사", "복원 이후 변화"],
+                        "speaker_notes": "핵심 변화 포인트를 설명",
+                    }
+                ],
+                "sources": [],
+                "notes": [],
+                "metadata": {"provider": "openai"},
+            }
+
+    monkeypatch.setattr(routes, "anthropic_skills_available", lambda: False)
+    monkeypatch.setattr(routes, "openai_document_generation_available", lambda: True)
+    monkeypatch.setattr(routes, "OpenAIDocumentIRGenerator", lambda: _DummyOpenAIGen())
+
+    exported = client.post(
+        f"/web/team-runs/{run_id}/exports",
+        json={"format": "pptx"},
+    )
+    assert exported.status_code == 200
+    payload = exported.json()
+    assert payload["provider"] == "openai_ir"
+    assert "openai_ir" in payload["provider_chain"]
+
+
+class _RaisingProvider:
+    async def generate_text(self, prompt: str) -> str:
+        raise RuntimeError("429 quota exceeded")
+
+    async def generate_structured(self, prompt: str, schema: dict) -> dict:
+        raise RuntimeError("429 quota exceeded")
+
+
+class _FallbackProvider:
+    async def generate_text(self, prompt: str) -> str:
+        return (
+            '{"visible_message":"fallback ok","suggested_next_agent":null,'
+            '"handoff_reason":"fallback","task_status":"done","done":true,'
+            '"needs_user_input":false,"artifact_update":null}'
+        )
+
+    async def generate_structured(self, prompt: str, schema: dict) -> dict:
+        return {"ok": True}
+
+
+class _DummyAgent(BaseAgent):
+    def build_prompt(self, user_request: str, context: str = "") -> str:
+        return user_request
+
+
+def test_base_agent_falls_back_to_openai_when_retryable_error(monkeypatch):
+    config = AgentConfig(
+        handle="writer",
+        display_name="writer",
+        emoji="✍️",
+        provider="anthropic",
+        model="claude-test",
+        max_tokens=1000,
+        system_prompt="test",
+    )
+    agent = _DummyAgent(config)
+    agent._provider = _RaisingProvider()
+    agent._fallback_provider = _FallbackProvider()
+    agent._fallback_provider_name = "openai"
+    agent._fallback_provider_model = "gpt-test"
+
+    result = asyncio.run(agent.run("테스트", ""))
+    assert result.fallback_used is True
+    assert result.provider == "openai"
+    assert result.model == "gpt-test"
+    assert "fallback ok" in result.text
 
 
 def test_team_run_request_accepts_source_files_and_exposes_source_ir_summary(client):

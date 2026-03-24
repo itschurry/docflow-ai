@@ -44,6 +44,8 @@ class AgentResult:
     missing_information: list[str] | None = None
     recommended_mode: str | None = None
     artifact_update: dict[str, Any] | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
 
 
 def build_provider(provider: str, model: str) -> LLMProvider:
@@ -62,6 +64,16 @@ class BaseAgent(ABC):
     def __init__(self, config: AgentConfig):
         self.config = config
         self._provider = build_provider(config.provider, config.model)
+        self._fallback_provider: LLMProvider | None = None
+        self._fallback_provider_name: str | None = None
+        self._fallback_provider_model: str | None = None
+        if config.provider == "anthropic" and settings.openai_api_key:
+            self._fallback_provider = OpenAIProvider(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+            )
+            self._fallback_provider_name = "openai"
+            self._fallback_provider_model = settings.openai_model
 
     @property
     def handle(self) -> str:
@@ -107,7 +119,21 @@ class BaseAgent(ABC):
             "- 문서 초안/검토/결정/최종본을 만들었다면 artifact_update를 함께 채우고, 단순 대화면 null로 두세요\n"
             f"{role_rules}"
         )
-        text = (await self._provider.generate_text(full_prompt)).strip()
+        provider_used = self.config.provider
+        model_used = self.config.model
+        fallback_used = False
+        fallback_reason: str | None = None
+        try:
+            text = (await self._provider.generate_text(full_prompt)).strip()
+        except Exception as exc:
+            if self._fallback_provider and _is_retryable_provider_error(exc):
+                text = (await self._fallback_provider.generate_text(full_prompt)).strip()
+                provider_used = self._fallback_provider_name or "openai"
+                model_used = self._fallback_provider_model or settings.openai_model
+                fallback_used = True
+                fallback_reason = f"{type(exc).__name__}: {str(exc)[:220]}"
+            else:
+                raise
         parsed = _parse_agent_payload(text)
         suggested = parsed.get("suggested_next_agent")
         handoff_reason = str(parsed.get("handoff_reason") or "").strip()
@@ -142,9 +168,33 @@ class BaseAgent(ABC):
             missing_information=missing,
             recommended_mode=recommended_mode,
             artifact_update=artifact_update,
-            provider=self.config.provider,
-            model=self.config.model,
+            provider=provider_used,
+            model=model_used,
+            fallback_used=fallback_used,
+            fallback_reason=fallback_reason,
         )
+
+
+def _is_retryable_provider_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if status_code in {408, 409, 425, 429, 500, 502, 503, 504, 529}:
+            return True
+    lowered = str(exc).lower()
+    retryable_tokens = (
+        "rate limit",
+        "too many requests",
+        "quota",
+        "overloaded",
+        "temporar",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "service unavailable",
+        "529",
+        "429",
+    )
+    return any(token in lowered for token in retryable_tokens)
 
 
 def _parse_agent_payload(text: str) -> dict[str, Any]:
