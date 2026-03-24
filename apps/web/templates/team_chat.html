@@ -6,598 +6,314 @@
   <title>DocFlow AI — 에이전트 팀 작업공간</title>
   <style>
     :root {
-      --bg: #f2f5fb;
-      --bg2: #eaeff8;
+      /* Refined Professional Color Palette */
+      --bg: #f8fafc;
+      --bg-sidebar: linear-gradient(175deg, #0f172a 0%, #1e293b 100%);
       --surface: #ffffff;
-      --surface-strong: #ffffff;
-      --surface-soft: #f8faff;
-      --line: #dde5f0;
-      --line-strong: #c5d0e4;
-      --text: #1a2438;
-      --muted: #5a6b80;
-      --accent: #2563eb;
-      --accent-soft: rgba(37, 99, 235, 0.08);
-      --success: #16a34a;
-      --danger: #dc2626;
-      --chip: #eef2fb;
-      --planner: rgba(37, 99, 235, 0.06);
-      --writer: rgba(22, 163, 74, 0.07);
-      --critic: rgba(220, 38, 38, 0.06);
-      --coder: rgba(124, 58, 237, 0.06);
-      --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Segoe UI", sans-serif;
-      --font-display: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      --surface-soft: #f1f5f9;
+      --line: #e2e8f0;
+      --line-strong: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-soft: rgba(59, 130, 246, 0.08);
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --chip: #f1f5f9;
+
+      /* Agent Identity Colors (Soft pastels) */
+      --planner-bg: rgba(59, 130, 246, 0.05);
+      --writer-bg: rgba(16, 185, 129, 0.05);
+      --critic-bg: rgba(239, 68, 68, 0.05);
+      --qa-bg: rgba(245, 158, 11, 0.05);
+      --coder-bg: rgba(139, 92, 246, 0.05);
+
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+
+      --font-ui: "Inter", "IBM Plex Sans KR", "Segoe UI", sans-serif;
+      --font-display: "Inter", "IBM Plex Sans KR", sans-serif;
       color-scheme: light;
     }
-    * { box-sizing: border-box; }
-    html, body { min-height: 100%; }
+
+    * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+    html, body { min-height: 100%; height: 100%; overflow: hidden; }
     body {
       margin: 0;
       font-family: var(--font-ui);
       font-size: 14px;
-      line-height: 1.55;
+      line-height: 1.6;
       color: var(--text);
       background: var(--bg);
     }
-    .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    .layout { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+
+    /* Sidebar Refinement */
     .side {
-      border-right: 1px solid var(--line);
-      background: linear-gradient(175deg, #1e3a5f 0%, #0d1f35 100%);
-      padding: 20px 16px 24px;
+      background: var(--bg-sidebar);
+      padding: 24px 20px;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      border-right: 1px solid rgba(255,255,255,0.05);
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-bottom: 20px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.12);
+      padding-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
     }
-    .brand-copy { display: grid; gap: 2px; }
-    .brand-copy b { color: #ffffff; font-size: 15px; }
-    .brand-copy span { color: #94b4d4; font-size: 12px; }
+    .brand-copy b { color: #fff; font-size: 16px; letter-spacing: -0.01em; }
+    .brand-copy span { color: #94a3b8; font-size: 12px; }
     .dot {
-      width: 34px;
-      height: 34px;
+      width: 36px; height: 36px;
       border-radius: 10px;
       background: linear-gradient(135deg, #60a5fa, #3b82f6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
     }
+
     .card {
-      margin-bottom: 12px;
-      padding: 14px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.12);
-      animation: riseIn .35s ease both;
+      padding: 16px;
+      border-radius: var(--radius-md);
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      transition: background 0.2s ease;
     }
-    .card b { font-size: 13px; color: #e8f0fe; }
+    .card:hover { background: rgba(255,255,255,0.08); }
+    .card b { font-size: 13px; color: #f1f5f9; display: block; margin-bottom: 10px; }
+
     .side-label {
       font-size: 11px;
       font-weight: 700;
-      letter-spacing: .1em;
+      letter-spacing: 0.05em;
       text-transform: uppercase;
-      color: #94b4d4;
-      margin-bottom: 6px;
-      display: block;
+      color: #64748b;
+      margin-bottom: 8px;
     }
-    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .mini { font-size: 12px; color: var(--muted); }
-    .side .mini { color: #94b4d4; }
-    .agents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+    .agents { display: flex; flex-wrap: wrap; gap: 6px; }
     .agent-chip {
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(255,255,255,0.08);
-      border-radius: 999px;
-      padding: 5px 10px;
-      font-size: 13px;
-      color: #dbe8fc;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #cbd5e1;
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
     }
-    .agent-chip input { margin-right: 5px; accent-color: #60a5fa; }
+    .agent-chip:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    .agent-chip input { margin: 0; accent-color: var(--accent); }
+
+    /* Main Area Refinement */
     .main {
-      min-height: 100vh;
       display: grid;
       grid-template-rows: auto 1fr auto;
-      background: var(--bg);
+      height: 100vh;
+      overflow: hidden;
     }
     .top {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-      gap: 20px;
-      align-items: end;
-      padding: 22px 28px 16px;
-      background: white;
+      padding: 20px 32px;
+      background: #fff;
       border-bottom: 1px solid var(--line);
-    }
-    .kicker {
-      font-size: 11px;
-      letter-spacing: .14em;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin-bottom: 6px;
-      font-weight: 700;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .title {
-      font-family: var(--font-display);
-      font-size: clamp(22px, 2.5vw, 30px);
-      line-height: 1.1;
-      letter-spacing: -.01em;
-      margin: 0 0 8px 0;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
       color: var(--text);
-      font-weight: 700;
+      margin: 0 0 4px 0;
     }
-    .subtitle {
-      max-width: 580px;
-      font-size: 14px;
-      line-height: 1.55;
-      color: var(--muted);
-      margin-bottom: 10px;
-    }
-    .status-strip {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      padding: 5px 11px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--bg2);
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .status-strip::before {
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: var(--success);
-      flex-shrink: 0;
-    }
-    /* Workspace info row */
-    .workspace-info-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-      margin-top: 8px;
-    }
+    .subtitle { color: var(--text-muted); font-size: 14px; margin: 0; }
+
     .ws-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 3px 9px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 500;
-      border: 1px solid transparent;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 600;
     }
-    .ws-badge.label { background: var(--bg2); border-color: var(--line); color: var(--muted); }
-    /* Status badges */
-    .ws-badge.status-active    { background: #dcfce7; border-color: #86efac; color: #15803d; }
-    .ws-badge.status-running   { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
-    .ws-badge.status-planning  { background: #fef9c3; border-color: #fde047; color: #a16207; }
-    .ws-badge.status-done      { background: #f0fdf4; border-color: #86efac; color: #166534; }
-    .ws-badge.status-blocked   { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
-    .ws-badge.status-idle      { background: var(--bg2); border-color: var(--line); color: var(--muted); }
-    .ws-badge.status-dot::before {
-      content: "";
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: currentColor;
-      opacity: 0.7;
-      flex-shrink: 0;
-    }
-    @keyframes pulse-dot { 0%,100%{opacity:.7} 50%{opacity:1} }
-    .ws-badge.status-active.status-dot::before,
-    .ws-badge.status-running.status-dot::before,
-    .ws-badge.status-planning.status-dot::before {
-      animation: pulse-dot 1.6s ease-in-out infinite;
-    }
-    /* Agent row */
-    .agent-row { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
-    .top-side {
-      display: grid;
-      gap: 8px;
-      justify-items: end;
-      align-content: start;
-    }
-    .top-label {
-      font-size: 11px;
-      color: var(--muted);
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-    .live {
-      display: flex;
-      gap: 5px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-    .live .agent-chip {
-      background: var(--chip);
-      border-color: var(--line);
-      color: var(--text);
-    }
+    .ws-badge.label { background: var(--surface-soft); color: var(--text-muted); border: 1px solid var(--line); }
+    .ws-badge.status-active { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+    .ws-badge.status-running { background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; }
+    .ws-badge.status-planning { background: #fffbeb; color: #d97706; border: 1px solid #fef3c7; }
+
     .workspace-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.18fr) minmax(360px, 1fr);
-      gap: 16px;
-      padding: 16px 20px 20px;
-      align-items: start;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 24px;
+      padding: 24px 32px;
+      overflow-y: auto;
+      background: var(--bg);
     }
-    .primary-column,
-    .secondary-column {
-      display: grid;
-      gap: 14px;
-      align-content: start;
-      min-width: 0;
-    }
-    .section-panel,
-    .deliverable-box,
-    .progress-box,
-    .plan-box,
-    .session-box,
-    .message-box,
-    .board-box,
-    .task-detail-box,
-    .task-create-box {
-      border: 1px solid var(--line);
-      border-radius: 14px;
+
+    .section-panel {
       background: var(--surface);
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-      animation: riseIn .35s ease both;
-    }
-    .deliverable-box {
-      padding: 18px 20px 20px;
-      border-color: #c7d4ef;
-      border-left: 4px solid var(--accent);
-    }
-    .deliverable-head {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
       display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 12px;
+      flex-direction: column;
     }
-    .deliverable-head b {
-      display: block;
-      font-size: 16px;
-      color: var(--text);
-      margin-bottom: 3px;
-      font-weight: 700;
+
+    .deliverable-box {
+      background: #fff;
+      border-left: 4px solid var(--accent);
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
     }
     .deliverable-body {
-      line-height: 1.70;
-      max-height: 420px;
-      overflow: auto;
-      font-size: 14px;
-      padding-right: 4px;
-      color: var(--text);
+      font-size: 15px;
+      line-height: 1.8;
+      color: #334155;
     }
-    .deliverable-body h1, .deliverable-body h2, .deliverable-body h3 {
-      margin: 1em 0 .35em;
-      font-weight: 700;
-      color: #1e3a5f;
-    }
-    .deliverable-body h1 { font-size: 1.25em; }
-    .deliverable-body h2 { font-size: 1.1em; border-bottom: 1px solid #dde6f4; padding-bottom: .2em; }
-    .deliverable-body h3 { font-size: 1em; }
-    .deliverable-body p { margin: .5em 0; }
-    .deliverable-body ul, .deliverable-body ol { padding-left: 1.4em; margin: .4em 0; }
-    .deliverable-body li { margin: .2em 0; }
-    .deliverable-body strong { font-weight: 600; }
-    .deliverable-body table { border-collapse: collapse; width: 100%; font-size: 13px; margin: .6em 0; }
-    .deliverable-body th, .deliverable-body td { border: 1px solid #dde; padding: 5px 10px; text-align: left; }
-    .deliverable-body th { background: #f0f4ff; font-weight: 600; }
-    .deliverable-body code { background: #f3f4f6; border-radius: 3px; padding: 1px 5px; font-size: 12px; }
-    .deliverable-body pre code { display: block; padding: 10px; overflow-x: auto; line-height: 1.5; }
-    .progress-box {
-      padding: 14px 16px;
-      background: #f8fff8;
-      border-color: #c6e8c6;
-    }
-    .plan-box,
-    .session-box,
-    .message-box {
-      padding: 14px 16px;
-    }
-    .progress-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 13px;
-      color: var(--text);
-      margin-bottom: 10px;
-      font-weight: 600;
-    }
-    .progress-list {
-      display: grid;
-      gap: 6px;
-      max-height: 260px;
-      overflow: auto;
-      padding-right: 4px;
-    }
-    .progress-step {
-      position: relative;
-      padding: 10px 12px 10px 14px;
-      border-left: 3px solid #86efac;
-      background: rgba(22, 163, 74, 0.04);
-      border-radius: 0 10px 10px 0;
-    }
-    .progress-line {
-      font-size: 14px;
-      line-height: 1.5;
-      color: var(--text);
-      display: flex;
-      gap: 8px;
-      align-items: flex-start;
-    }
-    .progress-index,
-    .message-index {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 28px;
-      height: 20px;
-      padding: 0 6px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-    .progress-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
-    .panel-head {
-      font-size: 13px;
-      color: var(--text);
-      margin-bottom: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      font-weight: 600;
-    }
-    .plan-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-    .session-list,
-    .message-list {
-      display: grid;
-      gap: 8px;
-    }
-    .session-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      max-height: 144px;
-      overflow: auto;
-      padding-right: 4px;
-    }
-    .session-led {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: var(--bg2);
-      padding: 6px 10px;
-      min-height: 30px;
-    }
-    .session-led-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: #94a3b8;
-      box-shadow: 0 0 0 0 rgba(148, 163, 184, 0.45);
-      flex-shrink: 0;
-    }
-    .session-led.busy .session-led-dot {
-      background: #22c55e;
-      box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.16);
-      animation: pulse-dot 1.4s ease-in-out infinite;
-    }
-    .session-led-name {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text);
-    }
-    .session-led-state {
-      font-size: 11px;
-      color: var(--muted);
-    }
-    .message-list {
-      max-height: 300px;
-      overflow: auto;
-      padding-right: 4px;
-    }
-    .session-item,
-    .message-item {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--bg2);
-      padding: 10px 12px;
-    }
-    .session-title,
-    .message-title {
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 3px;
-      color: var(--text);
-    }
-    .session-meta,
-    .message-meta {
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.4;
-    }
-    .message-body {
-      margin-top: 5px;
-      white-space: pre-wrap;
-      line-height: 1.5;
-      font-size: 13px;
-      color: var(--text);
-    }
-    .board-box {
-      padding: 14px 14px 16px;
-    }
-    .board-head {
-      font-size: 13px;
-      color: var(--text);
-      margin-bottom: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      font-weight: 600;
-    }
-    .board-columns { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+
+    /* Board Refinement */
+    .board-box { padding: 20px; background: var(--surface-soft); border: 1px solid var(--line); }
+    .board-columns { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
     .board-col {
+      background: #f8fafc;
       border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--bg);
-      padding: 10px;
-      min-height: 160px;
+      border-radius: var(--radius-md);
+      padding: 12px;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .board-col h4 {
-      margin: 0 0 8px 0;
+      margin: 0 0 4px 0;
       font-size: 11px;
-      letter-spacing: .08em;
+      font-weight: 800;
+      color: var(--text-muted);
       text-transform: uppercase;
-      color: var(--accent);
-      font-weight: 700;
+      letter-spacing: 0.05em;
     }
+
     .task-card {
+      background: #fff;
       border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--surface);
-      padding: 10px 12px;
-      margin-bottom: 6px;
+      border-radius: var(--radius-sm);
+      padding: 12px;
       cursor: pointer;
-      transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .task-card:hover {
-      transform: translateY(-1px);
-      border-color: #93b4e8;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
-    }
-    .task-card.active {
       border-color: var(--accent);
-      background: #eff5ff;
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
     }
-    .task-card:last-child { margin-bottom: 0; }
-    .task-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; line-height: 1.45; color: var(--text); }
-    .task-meta { font-size: 12px; color: var(--muted); }
-    .task-flags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-    .task-badge { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--chip); }
-    .task-badge.review { border-color: #fca5a5; background: #fff1f2; color: #b91c1c; }
-    .task-badge.ready { border-color: #86efac; background: #f0fff4; color: #166534; }
-    .task-badge.artifact { border-color: #93c5fd; background: #eff5ff; color: #1d4ed8; }
+    .task-card.active { border-color: var(--accent); background: #f0f7ff; ring: 2px var(--accent-soft); }
+    .task-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .task-meta { font-size: 11px; color: var(--text-muted); }
+
+    /* Task Detail Slide-over Panel */
     .task-detail-box {
       position: fixed;
-      left: 300px;
-      right: 0;
-      bottom: 0;
-      width: calc(100% - 300px);
-      max-height: 86vh;
-      overflow: auto;
-      border-radius: 18px 18px 0 0;
-      border-left: none;
-      border-right: none;
-      border-bottom: none;
-      box-shadow: 0 -12px 34px rgba(15, 23, 42, 0.22);
-      z-index: 60;
-      padding: 14px 18px 16px;
-      transform: translateY(108%);
-      transition: transform .24s ease;
+      top: 0; right: 0; bottom: 0;
+      width: 500px;
+      background: #fff;
+      box-shadow: -10px 0 30px rgba(0,0,0,0.1);
+      z-index: 100;
+      padding: 32px;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex !important; /* Managed by .open class */
+      flex-direction: column;
+      gap: 24px;
+      overflow-y: auto;
     }
-    .task-detail-box.open {
-      transform: translateY(0);
-    }
+    .task-detail-box.open { transform: translateX(0); }
     .task-detail-backdrop {
-      position: fixed;
-      left: 300px;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      background: rgba(2, 6, 23, 0.38);
-      z-index: 54;
+      position: fixed; inset: 0;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(2px);
+      z-index: 90;
       display: none;
     }
-    .task-detail-panel-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-      font-size: 13px;
-      color: var(--text);
-      font-weight: 700;
+
+    /* Message UI Refinement */
+    .msg {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: 16px;
+      font-size: 14px;
+      position: relative;
+      margin-bottom: 12px;
     }
-    .task-detail-close {
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 999px;
+    .msg.user { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; align-self: flex-end; margin-left: auto; }
+    .msg.agent { background: var(--surface-soft); color: var(--text); border-bottom-left-radius: 4px; border: 1px solid var(--line); }
+
+    /* Composer Refinement */
+    .composer-wrap {
+      padding: 20px 32px 32px;
+      background: #fff;
+      border-top: 1px solid var(--line);
     }
-    .task-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
-    .task-detail-title { font-size: 16px; font-weight: 700; color: var(--text); }
-    .task-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .task-detail-actions select,
-    .task-detail-actions button { font-size: 13px; padding: 7px 10px; }
-    .task-detail-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
-    .task-detail-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 12px; }
-    .task-detail-card b { display: block; margin-bottom: 6px; font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-    .task-detail-body { white-space: pre-wrap; line-height: 1.5; font-size: 13px; color: var(--text); }
-    .task-detail-list { display: grid; gap: 6px; max-height: 220px; overflow: auto; padding-right: 4px; }
-    .task-detail-item { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 10px; }
-    .task-detail-item-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; color: var(--text); }
-    .task-empty { font-size: 13px; color: var(--muted); }
-    .task-form-grid { display: grid; gap: 7px; }
-    .task-form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .task-form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .task-form-grid textarea { min-height: 90px; }
-    .task-form-grid select[multiple] { min-height: 100px; }
-    .task-form-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-    .task-create-box {
-      padding: 14px;
-      background: #f8fff8;
-      border-color: #c6e8c6;
+    .composer {
+      background: #fff;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-lg);
+      padding: 8px;
+      display: flex; gap: 12px;
+      box-shadow: var(--shadow-md);
+      transition: border-color 0.2s;
     }
-    @media (max-width: 1100px) {
+    .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    textarea {
+      flex: 1; border: none; outline: none; padding: 12px;
+      font-size: 15px; resize: none; min-height: 48px; max-height: 200px;
+    }
+    button.primary {
+      background: var(--accent); color: #fff; border: none;
+      padding: 0 24px; border-radius: var(--radius-md);
+      font-weight: 700; cursor: pointer; transition: background 0.2s;
+    }
+    button.primary:hover { background: var(--accent-hover); }
+
+    /* Input & Select Globals */
+    select, input[type="text"], input[type="number"] {
+      background: #fff; border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm); padding: 8px 12px;
+      font-size: 13px; outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+    @keyframes riseIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in { animation: riseIn 0.4s ease forwards; }
+
+    @media (max-width: 1200px) {
       .layout { grid-template-columns: 1fr; }
-      .side { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 16px; }
-      .top { grid-template-columns: 1fr; padding: 18px 16px 14px; }
-      .top-side { justify-items: start; }
-      .live { justify-content: flex-start; }
-      .workspace-grid { grid-template-columns: 1fr; padding: 0 14px 16px; }
-      .task-detail-grid { grid-template-columns: 1fr; }
-      .task-form-grid.two,
-      .task-form-grid.three { grid-template-columns: 1fr; }
-      .task-detail-box {
-        left: 0;
-        right: 0;
-        width: 100%;
-        max-height: 92vh;
-        padding: 12px 12px 14px;
-      }
-      .task-detail-backdrop {
-        left: 0;
-        right: 0;
-      }
+      .side { display: none; } /* Sidebar could be a toggle menu on mobile */
+      .workspace-grid { grid-template-columns: 1fr; }
+      .task-detail-box { width: 100%; }
     }
-    .chat-panel {
-      min-height: 320px;
+  </style>
+
       display: grid;
       grid-template-rows: auto minmax(200px, 1fr);
       padding: 14px 16px 10px;
@@ -736,229 +452,279 @@
       <div class="brand">
         <div class="dot">📝</div>
         <div class="brand-copy">
-          <span>DocFlow AI</span>
-          <b>에이전트 팀</b>
-        </div>
-      </div>
-      <div class="card stack">
-        <span class="side-label">⚙️ 작업 설정</span>
-        <div class="row">
-          <input id="sender" value="web_user" placeholder="내 이름 또는 ID" style="width:100%" title="메시지 발신자 이름" />
-        </div>
-        <div class="row">
-          <select id="mode" style="width:100%" title="작업 모드">
-            <option value="autonomous-lite">자동 (간소)</option>
-            <option value="autonomous">자동 (표준)</option>
-            <option value="guided">단계별 안내</option>
-            <option value="team-autonomous" selected>팀 자동 실행</option>
-          </select>
-        </div>
-        <div class="row">
-          <select id="oversightMode" style="width:100%" title="개입 방식">
-            <option value="auto" selected>결과물만 받기</option>
-            <option value="manual">중간에 직접 확인</option>
-          </select>
-        </div>
-        <div class="row">
-          <select id="outputType" style="width:100%" title="출력 파일 형식">
-            <option value="docx" selected>📝 DOCX — 문서/보고서</option>
-            <option value="xlsx">📊 XLSX — 표/스프레드시트</option>
-            <option value="pptx">📑 PPTX — 발표 자료</option>
-          </select>
-        </div>
-        <div class="row">
-          <select id="autoReviewPreset" style="width:100%" title="자동 검토 프리셋">
-            <option value="2" selected>빠름 (권장) · 2회</option>
-            <option value="3">균형 · 3회</option>
-            <option value="4">고품질 · 4회</option>
-          </select>
-        </div>
-        <div class="mini" id="autoReviewPresetHint">짧은 요청은 빠름(2회), 일반 문서는 균형(3회), 중요한 결과물은 고품질(4회)을 권장합니다.</div>
-        <div class="row">
-          <button id="newChat" style="flex:1">새 채팅</button>
-          <button id="refresh" style="flex:1">새로고침</button>
+          <b>DocFlow AI</b>
+          <span>에이전트 팀 워크스페이스</span>
         </div>
       </div>
 
-      <div class="card stack">
-        <div><b>📎 참고 문서 업로드</b></div>
-        <div class="mini">DOCX · XLSX · PPTX · PDF · TXT · CSV<br>문서를 첨부하면 팀이 내용을 파악해 작업에 반영합니다.</div>
-        <input id="sourceFileInput" type="file" multiple />
-        <button id="uploadSourceBtn">파일 업로드</button>
-        <div id="sourceFileHint" class="warn"></div>
-        <div id="sourceFileList" class="stack"></div>
-      </div>
+      <div class="side-content" style="display: flex; flex-direction: column; gap: 24px;">
+        <section>
+          <span class="side-label">⚙️ Workspace Settings</span>
+          <div class="card stack">
+            <div class="row">
+              <input id="sender" value="web_user" placeholder="Your Name" style="width:100%" title="발신자 이름" />
+            </div>
+            <div class="row">
+              <select id="mode" style="width:100%" title="작업 모드">
+                <option value="autonomous-lite">자동 (간소)</option>
+                <option value="autonomous">자동 (표준)</option>
+                <option value="guided">단계별 안내</option>
+                <option value="team-autonomous" selected>팀 자동 실행</option>
+              </select>
+            </div>
+            <div class="row">
+              <select id="oversightMode" style="width:100%" title="개입 방식">
+                <option value="auto" selected>결과물만 받기 (Auto)</option>
+                <option value="manual">중간 확인 (Manual)</option>
+              </select>
+            </div>
+            <div class="row">
+              <select id="outputType" style="width:100%" title="출력 파일 형식">
+                <option value="docx" selected>📝 DOCX — 문서/보고서</option>
+                <option value="xlsx">📊 XLSX — 표/스프레드시트</option>
+                <option value="pptx">📑 PPTX — 발표 자료</option>
+              </select>
+            </div>
+            <div class="row">
+              <select id="autoReviewPreset" style="width:100%" title="자동 검토 프리셋">
+                <option value="2" selected>빠름 (2회)</option>
+                <option value="3">균형 (3회)</option>
+                <option value="4">고품질 (4회)</option>
+              </select>
+            </div>
+            <div class="mini" id="autoReviewPresetHint" style="opacity: 0.7; font-size: 11px;"></div>
+            <div class="row" style="margin-top: 8px;">
+              <button id="newChat" style="flex:1; background: rgba(255,255,255,0.1); border: none; color: #fff;">New</button>
+              <button id="refresh" style="flex:1; background: rgba(255,255,255,0.1); border: none; color: #fff;">Refresh</button>
+            </div>
+          </div>
+        </section>
 
-      <div class="card">
-        <div><b>👥 참여 에이전트 선택</b></div>
-        <div class="mini">프로젝트에 참여할 AI 팀원을 선택하세요.</div>
-        <div id="agentPicker" class="agents"></div>
-        <button id="saveAgents" style="margin-top:10px; width:100%">이 채팅에 적용</button>
-        <div id="saveHint" class="warn"></div>
+        <section>
+          <span class="side-label">📎 Resources</span>
+          <div class="card stack">
+            <div class="mini" style="margin-bottom: 8px; color: #94a3b8;">Add context documents for the AI team.</div>
+            <input id="sourceFileInput" type="file" multiple style="display: none;" />
+            <button id="uploadTriggerBtn" style="width: 100%; margin-bottom: 8px;" onclick="document.getElementById('sourceFileInput').click()">Choose Files</button>
+            <button id="uploadSourceBtn" class="primary" style="width: 100%; display: none;">Upload</button>
+            <div id="sourceFileHint" class="warn"></div>
+            <div id="sourceFileList" class="stack" style="margin-top: 8px;"></div>
+          </div>
+        </section>
+
+        <section>
+          <span class="side-label">👥 AI Team Members</span>
+          <div class="card">
+            <div id="agentPicker" class="agents"></div>
+            <button id="saveAgents" style="margin-top:12px; width:100%; background: var(--accent); border: none; color: #fff; font-weight: 700;">Apply to Team</button>
+            <div id="saveHint" class="warn" style="margin-top: 8px;"></div>
+          </div>
+        </section>
       </div>
     </aside>
 
     <main class="main">
-      <div class="top">
-        <div>
-          <div class="kicker">DocFlow AI</div>
-          <div class="title" id="workspaceTitle">AI 팀 작업공간</div>
-          <div class="subtitle" id="workspaceSubtitle">요청 내용을 입력하면 AI 팀이 자동으로 문서를 작성합니다. 진행 상황을 실시간으로 확인하고 필요할 때 개입하세요.</div>
-          <div id="chatInfo" class="workspace-info-row"></div>
+      <header class="top">
+        <div class="top-info">
+          <h1 class="title" id="workspaceTitle">AI Team Workspace</h1>
+          <p class="subtitle" id="workspaceSubtitle">Automate your documentation workflow with AI agents.</p>
+          <div id="chatInfo" class="workspace-info-row" style="margin-top: 12px;"></div>
         </div>
-        <div class="top-side">
-          <div class="top-label">참여 에이전트</div>
+        <div class="top-side" style="text-align: right;">
+          <div class="side-label" style="color: var(--text-muted);">Active Agents</div>
           <div class="live agent-row" id="activeAgents"></div>
         </div>
-      </div>
+      </header>
+
       <div class="workspace-grid">
         <section class="primary-column">
-          <div class="deliverable-box" id="deliverableBox" style="display:none">
+          <!-- Deliverable Section -->
+          <div class="deliverable-box fade-in" id="deliverableBox" style="display:none">
             <div class="deliverable-head">
               <div>
-                <b>🎉 완성된 결과물</b>
-                <div class="mini">AI 팀이 전달한 최종 산출물입니다</div>
+                <b style="font-size: 18px;">✨ Final Deliverable</b>
+                <div class="mini">The output generated by your AI team.</div>
               </div>
-              <div style="display:flex; gap:8px; align-items:center;">
-                <button id="exportDocxBtn" style="display:none">⬇️ DOCX 저장</button>
-                <button id="exportXlsxBtn" style="display:none">⬇️ XLSX 저장</button>
-                <button id="exportPptxBtn" style="display:none">⬇️ PPTX 저장</button>
-                <button id="copyDeliverable">📋 복사</button>
+              <div class="deliverable-actions" style="display:flex; gap:8px;">
+                <button id="exportDocxBtn" class="primary" style="display:none">Download DOCX</button>
+                <button id="exportXlsxBtn" class="primary" style="display:none">Download XLSX</button>
+                <button id="exportPptxBtn" class="primary" style="display:none">Download PPTX</button>
+                <button id="copyDeliverable" style="background: #f1f5f9; border: 1px solid var(--line);">Copy Text</button>
               </div>
             </div>
-            <div class="mini" id="deliverableMeta"></div>
-            <div class="deliverable-body" id="deliverableBody"></div>
+            <div class="mini" id="deliverableMeta" style="margin-bottom: 16px; border-bottom: 1px solid var(--line); padding-bottom: 8px;"></div>
+            <div class="deliverable-body markdown-body" id="deliverableBody"></div>
           </div>
-          <div class="progress-box" id="progressBox" style="display:none">
-            <div class="progress-head"><b>✅ 진행 현황</b><span class="mini">요청 → 결과물</span></div>
-            <div class="progress-list" id="progressList"></div>
+
+          <!-- Progress Section -->
+          <div class="progress-box section-panel" id="progressBox" style="display:none">
+            <div class="progress-head" style="padding: 16px 20px; border-bottom: 1px solid #c6e8c6;">
+              <b>🚀 Real-time Progress</b>
+              <span class="mini">Tracking agent activities</span>
+            </div>
+            <div class="progress-list" id="progressList" style="padding: 16px;"></div>
           </div>
+
+          <!-- Chat Section -->
           <section class="section-panel chat-panel">
-            <div class="section-head">
-              <b>💬 내가 보낸 요청</b>
-              <span class="mini">입력 내역</span>
+            <div class="section-head" style="padding: 16px 20px; border-bottom: 1px solid var(--line); background: var(--surface-soft);">
+              <b>💬 Request History</b>
+              <span class="mini">Your interactions with the team</span>
             </div>
-            <div class="chat" id="chat"></div>
+            <div class="chat" id="chat" style="padding: 20px; display: flex; flex-direction: column;"></div>
           </section>
         </section>
+
         <aside class="secondary-column">
-          <div class="plan-box" id="planBox" style="display:none">
-            <div class="panel-head"><b>📋 실행 계획 승인</b><span class="mini" id="planMeta"></span></div>
-            <div class="mini" id="planSummary">실행 계획 상태를 확인합니다.</div>
-            <div class="plan-actions">
-              <button id="approvePlanBtn">✅ 계획 승인</button>
-              <button id="rejectPlanBtn">❌ 계획 반려</button>
+          <!-- Plan Approval -->
+          <div class="plan-box section-panel" id="planBox" style="display:none">
+            <div class="panel-head" style="padding: 16px 20px; border-bottom: 1px solid var(--line);">
+              <b>📋 Execution Plan</b>
+              <span class="mini" id="planMeta"></span>
+            </div>
+            <div style="padding: 16px;">
+              <div id="planSummary" style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;"></div>
+              <div class="plan-actions">
+                <button id="approvePlanBtn" class="primary" style="background: var(--success);">Approve Plan</button>
+                <button id="rejectPlanBtn" style="background: #fff; border: 1px solid var(--danger); color: var(--danger);">Reject</button>
+              </div>
             </div>
           </div>
-          <div class="session-box" id="sessionBox" style="display:none">
-            <div class="panel-head"><b>🤖 에이전트 현황</b><span class="mini" id="sessionMeta"></span></div>
-            <div class="session-list" id="sessionList"></div>
+
+          <!-- Agent Status -->
+          <div class="session-box section-panel" id="sessionBox" style="display:none">
+            <div class="panel-head" style="padding: 12px 16px; border-bottom: 1px solid var(--line);">
+              <b>🤖 Agent Status</b>
+              <span class="mini" id="sessionMeta"></span>
+            </div>
+            <div class="session-list" id="sessionList" style="padding: 12px;"></div>
           </div>
-          <div class="message-box" id="messageBox" style="display:none">
-            <div class="panel-head"><b>📥 팀 메시지함</b><span class="mini" id="messageMeta"></span></div>
-            <div class="message-list" id="messageList"></div>
+
+          <!-- Team Messages -->
+          <div class="message-box section-panel" id="messageBox" style="display:none">
+            <div class="panel-head" style="padding: 12px 16px; border-bottom: 1px solid var(--line);">
+              <b>📥 Internal Comms</b>
+              <span class="mini" id="messageMeta"></span>
+            </div>
+            <div class="message-list" id="messageList" style="padding: 12px;"></div>
           </div>
-          <div class="board-box" id="boardBox" style="display:none">
-            <div class="board-head"><b>📌 작업 보드</b><button id="toggleCreateTaskBtn">+ 새 작업 추가</button></div>
+
+          <!-- Task Board -->
+          <div class="board-box section-panel" id="boardBox" style="display:none">
+            <div class="board-head" style="margin-bottom: 16px;">
+              <b style="font-size: 15px;">📌 Task Board</b>
+              <button id="toggleCreateTaskBtn" style="font-size: 12px; padding: 4px 10px; border-radius: 6px;">+ New Task</button>
+            </div>
             <div class="board-columns" id="boardColumns"></div>
           </div>
-          <div class="task-create-box" id="taskCreateBox" style="display:none">
-            <div class="board-head"><b>✏️ 새 작업 추가</b></div>
+
+          <!-- Create Task Form -->
+          <div class="task-create-box section-panel" id="taskCreateBox" style="display:none; padding: 20px; background: #f0fdf4; border-color: #bbf7d0;">
+            <div class="board-head" style="margin-bottom: 12px;"><b>✏️ Create New Task</b></div>
             <div class="task-form-grid three">
-              <input id="createTaskTitle" placeholder="작업 제목" />
-              <select id="createTaskOwner"></select>
-              <select id="createTaskGoal"></select>
+              <input id="createTaskTitle" placeholder="Task Title" />
+              <select id="createTaskOwner" title="Owner"></select>
+              <select id="createTaskGoal" title="Goal"></select>
             </div>
             <div class="task-form-grid three" style="margin-top:8px">
-              <input id="createTaskPriority" type="number" min="1" step="1" placeholder="우선순위 (숫자)" />
-              <select id="createTaskParent"></select>
-              <select id="createTaskDeps" multiple></select>
+              <input id="createTaskPriority" type="number" min="1" step="1" placeholder="Priority" />
+              <select id="createTaskParent" title="Parent Task"></select>
+              <select id="createTaskDeps" multiple title="Dependencies"></select>
             </div>
             <div class="task-form-grid" style="margin-top:8px">
-              <textarea id="createTaskDescription" placeholder="작업에 대한 상세 설명을 입력하세요"></textarea>
+              <textarea id="createTaskDescription" placeholder="Detailed task description..."></textarea>
             </div>
-            <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px; color:var(--muted)"><input id="createTaskReview" type="checkbox" /> 검토(리뷰) 필요</label>
-            <div class="task-form-actions">
-              <button id="createTaskBtn">작업 생성</button>
-            </div>
-          </div>
-          <div class="task-detail-box" id="taskDetailBox" style="display:none">
-            <div class="task-detail-panel-head">
-              <div>
-                <b>🧩 작업 상세 / 검토</b>
-                <span class="mini">선택한 카드 기준</span>
-              </div>
-              <button id="closeTaskDetailBtn" class="task-detail-close">닫기</button>
-            </div>
-            <div class="task-detail-head">
-              <div>
-                <div class="task-detail-title" id="taskDetailTitle">작업 상세</div>
-                <div class="mini" id="taskDetailMeta"></div>
-              </div>
-              <div class="task-detail-actions">
-                <select id="taskOwnerSelect"></select>
-                <button id="applyOwnerBtn">담당자 변경</button>
-                <button id="rerunTaskBtn">🔄 재실행</button>
-                <button id="blockTaskBtn">🚫 차단</button>
-                <button id="unblockTaskBtn">✅ 차단 해제</button>
-                <button id="approveReviewBtn">👍 검토 승인</button>
-                <button id="rejectReviewBtn">👎 검토 반려</button>
-              </div>
-            </div>
-            <div class="task-detail-grid">
-              <div class="task-detail-card">
-                <b>작업 설명</b>
-                <div class="task-detail-body" id="taskDetailDescription"></div>
-              </div>
-              <div class="task-detail-card">
-                <b>선행 작업</b>
-                <div class="task-detail-list" id="taskDetailDependencies"></div>
-              </div>
-              <div class="task-detail-card">
-                <b>산출물</b>
-                <div class="task-detail-list" id="taskDetailArtifacts"></div>
-              </div>
-              <div class="task-detail-card">
-                <b>작업 이력</b>
-                <div class="task-detail-list" id="taskDetailActivity"></div>
-              </div>
-              <div class="task-detail-card">
-                <b>작업 내용 수정</b>
-                <div class="task-form-grid three">
-                  <input id="editTaskTitle" placeholder="작업 제목" />
-                  <select id="editTaskGoal"></select>
-                  <input id="editTaskPriority" type="number" min="1" step="1" placeholder="우선순위" />
-                </div>
-                <div class="task-form-grid" style="margin-top:8px">
-                  <textarea id="editTaskDescription" placeholder="작업 설명"></textarea>
-                </div>
-                <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:8px; color:var(--muted)"><input id="editTaskReview" type="checkbox" /> 검토(리뷰) 필요</label>
-                <div class="task-form-actions">
-                  <button id="saveTaskEditBtn">수정 저장</button>
-                </div>
-              </div>
-              <div class="task-detail-card">
-                <b>선행 작업 편집</b>
-                <div class="task-form-grid">
-                  <select id="editTaskDeps" multiple></select>
-                </div>
-                <div class="task-form-actions">
-                  <button id="saveTaskDepsBtn">선행 작업 저장</button>
-                </div>
-              </div>
+            <label class="mini" style="display:flex; align-items:center; gap:8px; margin-top:12px; font-weight: 600;">
+              <input id="createTaskReview" type="checkbox" /> Review Required
+            </label>
+            <div class="task-form-actions" style="margin-top: 16px;">
+              <button id="createTaskBtn" class="primary" style="width: 100%;">Create Task</button>
             </div>
           </div>
         </aside>
       </div>
+
+      <!-- Composer at the bottom -->
       <div class="composer-wrap">
         <div class="composer">
-        <textarea id="text" placeholder="AI 팀에게 요청하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"></textarea>
-        <button id="send">전송 ↵</button>
+          <textarea id="text" placeholder="Send a request to your AI team... (Enter to send)"></textarea>
+          <button id="send" class="primary">Send ↵</button>
         </div>
       </div>
     </main>
+
+    <!-- Task Detail Slide-over -->
+    <div class="task-detail-backdrop" id="taskDetailBackdrop"></div>
+    <div class="task-detail-box" id="taskDetailBox">
+      <div class="task-detail-panel-head">
+        <span style="text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent);">Task Detail & Review</span>
+        <button id="closeTaskDetailBtn" class="task-detail-close">✕ Close</button>
+      </div>
+      
+      <div class="task-detail-content">
+        <h2 class="task-detail-title" id="taskDetailTitle" style="font-size: 24px; margin-bottom: 8px;">Task Title</h2>
+        <div class="mini" id="taskDetailMeta" style="margin-bottom: 24px;"></div>
+        
+        <div class="task-detail-actions" style="margin-bottom: 32px; padding: 16px; background: var(--surface-soft); border-radius: var(--radius-md); display: flex; flex-wrap: wrap; gap: 8px;">
+          <select id="taskOwnerSelect" style="flex: 1; min-width: 120px;"></select>
+          <button id="applyOwnerBtn">Change Owner</button>
+          <button id="rerunTaskBtn">🔄 Rerun</button>
+          <button id="blockTaskBtn" style="color: var(--danger); border-color: var(--danger);">Block</button>
+          <button id="unblockTaskBtn" style="color: var(--success); border-color: var(--success);">Unblock</button>
+          <div style="width: 100%; height: 1px; background: var(--line); margin: 8px 0;"></div>
+          <button id="approveReviewBtn" class="primary" style="background: var(--success); flex: 1;">Approve Review</button>
+          <button id="rejectReviewBtn" style="color: var(--danger); border-color: var(--danger); flex: 1;">Reject</button>
+        </div>
+
+        <div class="task-detail-grid">
+          <section class="task-detail-card" style="background: none; border: none; padding: 0; margin-bottom: 24px;">
+            <b style="color: var(--text);">Description</b>
+            <div class="task-detail-body" id="taskDetailDescription" style="font-size: 14px; color: var(--text);"></div>
+          </section>
+
+          <section class="task-detail-card">
+            <b>Dependencies</b>
+            <div class="task-detail-list" id="taskDetailDependencies"></div>
+          </section>
+
+          <section class="task-detail-card">
+            <b>Artifacts</b>
+            <div class="task-detail-list" id="taskDetailArtifacts"></div>
+          </section>
+
+          <section class="task-detail-card">
+            <b>Activity Log</b>
+            <div class="task-detail-list" id="taskDetailActivity"></div>
+          </section>
+
+          <!-- Edit Section -->
+          <section class="task-detail-card" style="background: var(--surface-soft);">
+            <b>Edit Task Content</b>
+            <div class="task-form-grid" style="gap: 12px;">
+              <input id="editTaskTitle" placeholder="Task Title" />
+              <div class="task-form-grid two">
+                <select id="editTaskGoal" title="Goal"></select>
+                <input id="editTaskPriority" type="number" min="1" step="1" placeholder="Priority" />
+              </div>
+              <textarea id="editTaskDescription" placeholder="Description"></textarea>
+              <label class="mini" style="display:flex; align-items:center; gap:8px;">
+                <input id="editTaskReview" type="checkbox" /> Review Required
+              </label>
+              <button id="saveTaskEditBtn" class="primary" style="width: 100%;">Save Changes</button>
+            </div>
+          </section>
+
+          <section class="task-detail-card" style="background: var(--surface-soft);">
+            <b>Edit Dependencies</b>
+            <div class="task-form-grid">
+              <select id="editTaskDeps" multiple title="Dependencies" style="min-height: 120px;"></select>
+              <button id="saveTaskDepsBtn" style="margin-top: 12px;">Update Dependencies</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="task-detail-backdrop" id="taskDetailBackdrop" style="display:none"></div>
 
   <script>
     const apiBase = location.origin;
@@ -1139,18 +905,39 @@
     }
 
     function renderMessages(items){
-      const userItems = (items || []).filter(m => m.message_type === 'user');
-      chatEl.innerHTML = userItems
-        .map(m => `<div class="msg user"><div class="meta">USER · ${esc(m.created_at)}</div><div>${esc(m.raw_text)}</div></div>`)
+      chatEl.innerHTML = (items || [])
+        .map(m => {
+          const isUser = m.message_type === 'user';
+          const roleClass = isUser ? 'user' : 'agent';
+          const senderLabel = isUser ? 'YOU' : esc(handleLabel(m.speaker_role || m.speaker_identity || 'AGENT'));
+          const metaColor = isUser ? 'rgba(255,255,255,0.7)' : 'var(--text-muted)';
+          
+          return `
+            <div class="msg ${roleClass} fade-in">
+              <div class="meta" style="color: ${metaColor}; font-weight: 700; font-size: 10px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em;">
+                ${senderLabel} · ${esc(m.created_at)}
+              </div>
+              <div style="white-space: pre-wrap;">${esc(m.raw_text)}</div>
+            </div>
+          `;
+        })
         .join('');
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
-    function showTyping(label='에이전트'){
+    function showTyping(label='Team'){
       hideTyping();
       typingEl = document.createElement('div');
-      typingEl.className = 'typing';
-      typingEl.innerHTML = `<span>${esc(label)} 입력 중</span><span class="dots"><i></i><i></i><i></i></span>`;
+      typingEl.className = 'msg agent fade-in';
+      typingEl.style.display = 'flex';
+      typingEl.style.alignItems = 'center';
+      typingEl.style.gap = '12px';
+      typingEl.style.width = 'fit-content';
+      typingEl.style.padding = '10px 16px';
+      typingEl.innerHTML = `
+        <div class="dots"><i></i><i></i><i></i></div>
+        <span style="font-weight: 600; color: var(--accent); font-size: 13px;">${esc(label)} thinking...</span>
+      `;
       chatEl.appendChild(typingEl);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -1873,6 +1660,17 @@
     autoReviewPresetEl.addEventListener('change', () => {
       updateAutoReviewPresetHint();
     });
+    sourceFileInputEl.addEventListener('change', () => {
+      const files = sourceFileInputEl.files;
+      if(files.length > 0) {
+        document.getElementById('uploadSourceBtn').style.display = 'block';
+        sourceFileHintEl.textContent = `${files.length} files selected`;
+      } else {
+        document.getElementById('uploadSourceBtn').style.display = 'none';
+        sourceFileHintEl.textContent = '';
+      }
+    });
+
     uploadSourceBtnEl.addEventListener('click', () => uploadSourceFiles().catch(e => {
       sourceFileHintEl.textContent = e.message;
       alert(e.message);
