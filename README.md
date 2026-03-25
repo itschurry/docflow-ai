@@ -38,11 +38,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Database Migration
+cd ../..
+mkdir -p storage/db storage/uploads storage/dead_letter
 PYTHONPATH=. alembic upgrade head
 
 # Run FastAPI
 cd ~/docflow-ai
-uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port 800
+uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port 8000
 ```
 
 ### 2. Frontend Setup (apps/web-react)
