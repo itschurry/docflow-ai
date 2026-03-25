@@ -82,3 +82,27 @@ export async function exportDeliverable(
     body: JSON.stringify({ format }),
   });
 }
+
+export function approvePlan(runId: string): Promise<TeamBoardSnapshot> {
+  return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/plan/approve`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({}),
+  });
+}
+
+export function rejectPlan(runId: string, reason?: string): Promise<TeamBoardSnapshot> {
+  return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/plan/reject`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function updateTask(taskId: string, payload: Record<string, unknown>): Promise<TeamBoardSnapshot> {
+  return request<TeamBoardSnapshot>(`/web/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(payload),
+  });
+}

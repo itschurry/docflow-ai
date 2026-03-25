@@ -50,3 +50,10 @@ def workspace_page():
     if legacy_workspace.exists():
         return FileResponse(str(legacy_workspace))
     return JSONResponse({"detail": "React UI is not available"}, status_code=503)
+
+
+@app.get("/legacy-workspace", include_in_schema=False)
+def legacy_workspace_page():
+    if legacy_workspace.exists():
+        return FileResponse(str(legacy_workspace))
+    return JSONResponse({"detail": "Legacy workspace is not available"}, status_code=503)

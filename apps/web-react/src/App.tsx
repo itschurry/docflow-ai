@@ -1,6 +1,16 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createTeamRun, exportDeliverable, getBoard, listTeamRuns, sendRequest, uploadFile } from "./api";
-import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamRun } from "./types";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  approvePlan,
+  createTeamRun,
+  exportDeliverable,
+  getBoard,
+  listAgents,
+  listTeamRuns,
+  sendRequest,
+  updateTask,
+  uploadFile,
+} from "./api";
+import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot } from "./types";
 
 const AUTO_REVIEW_PRESETS = [
   { label: "보수적 (1회)", value: 1 },
@@ -8,92 +18,138 @@ const AUTO_REVIEW_PRESETS = [
   { label: "집중 (4회)", value: 4 },
 ] as const;
 
-function safeText(value?: string | null): string {
-  return String(value || "").trim();
+const TASK_STATUS_COLUMNS = [
+  { key: "todo", label: "Todo" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "review", label: "Review" },
+  { key: "done", label: "Done" },
+];
+
+function statusLabel(status?: string) {
+  if (!status) return "unknown";
+  if (status === "in_progress") return "In Progress";
+  if (status === "done") return "Done";
+  return status.replace(/_/g, " ");
 }
 
 export default function App() {
-  const [runs, setRuns] = useState<TeamRun[]>([]);
+  const [runs, setRuns] = useState<TeamRunSnapshot[]>([]);
   const [activeRunId, setActiveRunId] = useState<string>("");
   const [board, setBoard] = useState<TeamBoardSnapshot | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string>("");
-
   const [senderName, setSenderName] = useState("ceo");
-  const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
   const [outputType, setOutputType] = useState<OutputType>("pptx");
+  const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
   const [presetRounds, setPresetRounds] = useState<number>(2);
-  const [text, setText] = useState("");
   const [files, setFiles] = useState<FileUploadItem[]>([]);
+  const [composerText, setComposerText] = useState("");
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [error, setError] = useState("");
+  const [sendingRequest, setSendingRequest] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshRuns();
   }, []);
 
   useEffect(() => {
-    if (!activeRunId) return;
-    const timer = window.setInterval(() => {
-      void refreshBoard(activeRunId, false);
-    }, 2500);
-    return () => window.clearInterval(timer);
+    if (!activeRunId) {
+      setBoard(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchBoard = async () => {
+      try {
+        const data = await getBoard(activeRunId);
+        if (!cancelled) {
+          setBoard(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "워크스페이스를 불러오지 못했습니다.");
+        }
+      }
+    };
+    void fetchBoard();
+    const interval = window.setInterval(() => {
+      void fetchBoard();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [activeRunId]);
 
-  async function refreshRuns(): Promise<void> {
+  const selectedTask = useMemo<TeamTask | undefined>(() => {
+    return board?.tasks?.find((task) => task.id === selectedTaskId);
+  }, [board, selectedTaskId]);
+
+  async function refreshRuns() {
+    setLoadingRuns(true);
     try {
-      setError("");
       const items = await listTeamRuns();
       setRuns(items);
       const next = activeRunId || items[0]?.id || "";
       if (next) {
         setActiveRunId(next);
-        await refreshBoard(next, false);
-      } else {
-        setBoard(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "워크스페이스를 불러오지 못했습니다.");
-    }
-  }
-
-  async function refreshBoard(runId: string, withLoading: boolean): Promise<void> {
-    if (!runId) return;
-    try {
-      if (withLoading) setLoading(true);
-      const data = await getBoard(runId);
-      setBoard(data);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "작업 보드를 불러오지 못했습니다.");
     } finally {
-      if (withLoading) setLoading(false);
+      setLoadingRuns(false);
     }
   }
 
-  async function handleCreateRun(): Promise<void> {
+  async function handleCreateRun() {
+    setLoadingRuns(true);
     try {
-      setLoading(true);
-      const data = await createTeamRun({
+      const boardSnapshot = await createTeamRun({
         requestedBy: senderName || "ceo",
         oversightMode,
         outputType,
         autoReviewMaxRounds: presetRounds,
       });
-      await refreshRuns();
-      setActiveRunId(data.run.id);
-      setBoard(data);
+      setBoard(boardSnapshot);
+      setActiveRunId(boardSnapshot.run.id);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "새 워크스페이스를 만들지 못했습니다.");
+      setError(err instanceof Error ? err.message : "워크스페이스 생성에 실패했습니다.");
     } finally {
-      setLoading(false);
+      setLoadingRuns(false);
     }
   }
 
-  async function handleUpload(fileList: FileList | null): Promise<void> {
-    if (!fileList || fileList.length === 0) return;
+  async function handleSendRequest(e: FormEvent) {
+    e.preventDefault();
+    if (!activeRunId || !composerText.trim() || sendingRequest) {
+      return;
+    }
+    setSendingRequest(true);
     try {
-      setLoading(true);
+      const boardSnapshot = await sendRequest(activeRunId, {
+        text: composerText.trim(),
+        senderName: senderName || "ceo",
+        outputType,
+        autoReviewMaxRounds: presetRounds,
+        sourceFileIds: files.map((item) => item.id),
+      });
+      setBoard(boardSnapshot);
+      setComposerText("");
+      setFiles([]);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "요청 전송에 실패했습니다.");
+    } finally {
+      setSendingRequest(false);
+    }
+  }
+
+  async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) {
+      return;
+    }
+    try {
       const uploaded: FileUploadItem[] = [];
       for (const file of Array.from(fileList)) {
         const item = await uploadFile(file);
@@ -103,73 +159,100 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "파일 업로드에 실패했습니다.");
     } finally {
-      setLoading(false);
+      event.target.value = "";
     }
   }
 
-  async function handleSend(e: FormEvent): Promise<void> {
-    e.preventDefault();
-    if (!activeRunId || !safeText(text) || sending) return;
-    try {
-      setSending(true);
-      const data = await sendRequest(activeRunId, {
-        text: text.trim(),
-        senderName: senderName || "ceo",
-        outputType,
-        autoReviewMaxRounds: presetRounds,
-        sourceFileIds: files.map((item) => item.id),
-      });
-      setBoard(data);
-      setText("");
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "요청 전송에 실패했습니다.");
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function handleExport(format: OutputType): Promise<void> {
+  async function handleExport(format: OutputType) {
     if (!activeRunId) return;
     try {
-      const data = await exportDeliverable(activeRunId, format);
-      window.location.href = data.download_path;
+      const { download_path } = await exportDeliverable(activeRunId, format);
+      window.location.href = download_path;
     } catch (err) {
       setError(err instanceof Error ? err.message : "결과물 다운로드에 실패했습니다.");
     }
   }
 
-  const latestActivity = useMemo(() => {
-    const items = board?.activity || [];
-    return [...items].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
-  }, [board]);
+  async function handlePlanApprove() {
+    if (!activeRunId) return;
+    setPlanLoading(true);
+    try {
+      const snapshot = await approvePlan(activeRunId);
+      setBoard(snapshot);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "계획 승인에 실패했습니다.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
 
-  const chatMessages = useMemo(() => {
-    const items = board?.items || [];
-    return [...items].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  async function handlePlanReject() {
+    if (!activeRunId) return;
+    const reason = window.prompt("반려 사유를 입력하세요.") || "";
+    setPlanLoading(true);
+    try {
+      const snapshot = await rejectPlan(activeRunId, reason);
+      setBoard(snapshot);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "계획 반려에 실패했습니다.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  async function handleTaskAction(action: string) {
+    if (!selectedTaskId) return;
+    setPlanLoading(true);
+    try {
+      const snapshot = await updateTask(selectedTaskId, { action });
+      setBoard(snapshot);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "작업 처리를 실패했습니다.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  const activityList = board?.activity ?? [];
+  const messageList = board?.items ?? [];
+  const taskColumns = useMemo(() => {
+    const tasks = board?.tasks ?? [];
+    return TASK_STATUS_COLUMNS.map((column) => ({
+      ...column,
+      tasks: tasks.filter((task) => {
+        if (!task.status) return column.key === "todo";
+        if (task.status === column.key) return true;
+        if (column.key === "review" && task.review_state === "reviewed") return true;
+        if (column.key === "done" && task.status === "done") return true;
+        return false;
+      }),
+    }));
   }, [board]);
 
   return (
-    <div className="app">
+    <div className="app-shell">
       <aside className="sidebar">
-        <h1>DocFlow AI</h1>
+        <div className="sidebar-brand">
+          <strong>DocFlow AI</strong>
+          <small>Agent Team Workspace</small>
+        </div>
         <div className="panel">
           <label>발신자</label>
           <input value={senderName} onChange={(e) => setSenderName(e.target.value)} />
-
           <label>개입 모드</label>
           <select value={oversightMode} onChange={(e) => setOversightMode(e.target.value as OversightMode)}>
             <option value="auto">자동</option>
             <option value="manual">수동</option>
           </select>
-
-          <label>문서 형식</label>
+          <label>산출물 형식</label>
           <select value={outputType} onChange={(e) => setOutputType(e.target.value as OutputType)}>
             <option value="pptx">PPTX</option>
             <option value="docx">DOCX</option>
             <option value="xlsx">XLSX</option>
           </select>
-
           <label>자동 검토 프리셋</label>
           <select value={presetRounds} onChange={(e) => setPresetRounds(Number(e.target.value))}>
             {AUTO_REVIEW_PRESETS.map((item) => (
@@ -178,115 +261,221 @@ export default function App() {
               </option>
             ))}
           </select>
-
-          <button onClick={() => void handleCreateRun()} disabled={loading}>
+          <button onClick={handleCreateRun} disabled={loadingRuns}>
             새 워크스페이스
           </button>
-          <button onClick={() => void refreshRuns()} disabled={loading}>
-            새로고침
+          <button onClick={refreshRuns} disabled={loadingRuns}>
+            워크스페이스 목록 갱신
           </button>
         </div>
 
         <div className="panel">
           <label>참고 파일 업로드</label>
-          <input type="file" multiple onChange={(e) => void handleUpload(e.target.files)} />
+          <input type="file" multiple onChange={handleUpload} />
           <div className="file-list">
-            {files.map((item) => (
-              <div key={item.id} className="file-item">
-                {item.original_name}
-              </div>
+            {files.map((file) => (
+              <div key={file.id}>{file.original_name}</div>
             ))}
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel run-list">
           <label>워크스페이스</label>
-          <div className="run-list">
-            {runs.map((run) => (
-              <button
-                key={run.id}
-                className={run.id === activeRunId ? "run-item active" : "run-item"}
-                onClick={() => {
-                  setActiveRunId(run.id);
-                  void refreshBoard(run.id, true);
-                }}
-              >
-                <span>{run.title || "Untitled"}</span>
-                <small>{run.status}</small>
-              </button>
-            ))}
-          </div>
+          {runs.map((run) => (
+            <button
+              key={run.id}
+              className={run.id === activeRunId ? "run-item active" : "run-item"}
+              onClick={() => setActiveRunId(run.id)}
+            >
+              <div>{run.title || "Untitled"}</div>
+              <small>{run.status}</small>
+            </button>
+          ))}
         </div>
       </aside>
 
-      <main className="main">
-        <header className="header">
+      <main className="workspace">
+        <header className="workspace-header">
           <div>
-            <h2>{board?.run?.title || "Workspace"}</h2>
+            <h2>{board?.run?.title || "워크스페이스"}</h2>
             <p>
-              상태: <b>{board?.run?.status || "idle"}</b> | 계획: <b>{board?.run?.plan_status || "-"}</b> | 출력:{" "}
-              <b>{board?.run?.output_type || outputType}</b>
+              상태: <strong>{board?.run?.status || "idle"}</strong> | 계획: <strong>{board?.run?.plan_status || "-"}</strong> | 출력:{" "}
+              <strong>{board?.run?.output_type || outputType}</strong>
             </p>
           </div>
           <div className="header-actions">
-            <button onClick={() => void handleExport("pptx")}>PPTX 다운로드</button>
-            <button onClick={() => void handleExport("docx")}>DOCX 다운로드</button>
-            <button onClick={() => void handleExport("xlsx")}>XLSX 다운로드</button>
+            <button onClick={() => handleExport("pptx")}>PPTX</button>
+            <button onClick={() => handleExport("docx")}>DOCX</button>
+            <button onClick={() => handleExport("xlsx")}>XLSX</button>
           </div>
         </header>
 
-        {error ? <div className="error">{error}</div> : null}
+        {error ? <div className="error-banner">{error}</div> : null}
 
-        <section className="content-grid">
-          <article className="card">
+        <section className="workspace-grid">
+          <article className="panel activity-panel">
             <h3>진행 현황</h3>
-            <div className="scroll-list">
-              {latestActivity.length === 0 ? <div className="empty">활동 내역 없음</div> : null}
-              {latestActivity.map((item, index) => (
-                <div key={item.id} className="log-item">
-                  <span className="idx">#{latestActivity.length - index}</span>
-                  <span className="summary">{item.summary}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="card">
-            <h3>팀 메시지</h3>
-            <div className="scroll-list">
-              {chatMessages.length === 0 ? <div className="empty">대화 없음</div> : null}
-              {chatMessages.map((item) => (
-                <div key={item.id} className="chat-item">
-                  <b>{item.speaker_role || "agent"}</b>
-                  <p>{safeText(item.visible_message) || safeText(item.raw_text)}</p>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="card card-wide">
-            <h3>최종 결과물</h3>
-            <div className="deliverable">
-              {safeText(board?.deliverable?.content) ? (
-                <pre>{safeText(board?.deliverable?.content)}</pre>
+            <div className="scroll-area">
+              {activityList.length === 0 ? (
+                <p className="empty-state">아직 활동 이력이 없습니다.</p>
               ) : (
-                <div className="empty">아직 결과물이 없습니다.</div>
+                activityList.map((item, index) => (
+                  <div key={item.id} className="activity-item">
+                    <span className="activity-index">#{activityList.length - index}</span>
+                    <div>
+                      <p>{item.summary}</p>
+                      <small>{item.actor_handle || "system"} · {item.created_at}</small>
+                    </div>
+                  </div>
+                ))
               )}
+            </div>
+          </article>
+
+          <article className="panel message-panel">
+            <h3>대화 로그</h3>
+            <div className="scroll-area">
+              {messageList.length === 0 ? (
+                <p className="empty-state">대화 내용이 없습니다.</p>
+              ) : (
+                messageList.map((message) => (
+                  <div key={message.id} className="message-item">
+                    <strong>{message.speaker_role || "user"}</strong>
+                    <p>{message.visible_message || message.raw_text || "내용 없음"}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
+
+          <article className="panel board-panel">
+            <div className="panel-header">
+              <h3>작업 보드</h3>
+              <div className="run-meta">
+                {board?.run?.selected_agents?.join(", ") || "다수 에이전트"}
+              </div>
+            </div>
+            <div className="board-columns">
+              {taskColumns.map((column) => (
+                <div key={column.key} className="board-column">
+                  <h4>{column.label}</h4>
+                  <div className="column-body">
+                    {column.tasks.length === 0 ? (
+                      <p className="empty-state">비어 있음</p>
+                    ) : (
+                      column.tasks.map((task) => (
+                        <button
+                          key={task.id}
+                          className={task.id === selectedTaskId ? "task-card active" : "task-card"}
+                          onClick={() => setSelectedTaskId(task.id)}
+                        >
+                          <div className="task-title">{task.title}</div>
+                          <small>{task.owner_handle || "unassigned"}</small>
+                          <span className="task-status">{statusLabel(task.status)}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel deliverable-panel">
+            <h3>최종 결과물</h3>
+            <div className="deliverable-body">
+              {board?.deliverable?.content ? (
+                <pre>{board.deliverable.content}</pre>
+              ) : (
+                <p className="empty-state">아직 결과물이 없습니다.</p>
+              )}
+            </div>
+            <div className="deliverable-meta">
+              <button onClick={() => handleExport("pptx")} disabled={!board?.deliverable}>
+                PPTX 다운로드
+              </button>
+              <button onClick={() => handleExport("docx")} disabled={!board?.deliverable}>
+                DOCX 다운로드
+              </button>
+              <button onClick={() => handleExport("xlsx")} disabled={!board?.deliverable}>
+                XLSX 다운로드
+              </button>
             </div>
           </article>
         </section>
 
-        <form className="composer" onSubmit={(e) => void handleSend(e)}>
+        <section className="detail-row">
+          <div className="task-detail">
+            {selectedTask ? (
+              <>
+                <h3>{selectedTask.title}</h3>
+                <p>{selectedTask.description}</p>
+                <dl>
+                  <div>
+                    <dt>담당</dt>
+                    <dd>{selectedTask.owner_handle || "없음"}</dd>
+                  </div>
+                  <div>
+                    <dt>상태</dt>
+                    <dd>{statusLabel(selectedTask.status)}</dd>
+                  </div>
+                  <div>
+                    <dt>우선순위</dt>
+                    <dd>{selectedTask.priority ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>리뷰 상태</dt>
+                    <dd>{selectedTask.review_state || "-"}</dd>
+                  </div>
+                </dl>
+                <div className="task-actions">
+                  <button onClick={() => handleTaskAction("rerun")}>Rerun</button>
+                  <button onClick={() => handleTaskAction("block")}>Block</button>
+                  <button onClick={() => handleTaskAction("unblock")}>Unblock</button>
+                  <button onClick={() => handleTaskAction("approve_review")}>Approve Review</button>
+                  <button onClick={() => handleTaskAction("reject_review")}>Reject Review</button>
+                </div>
+              </>
+            ) : (
+              <p className="empty-state">작업을 선택하면 세부 정보를 보여줍니다.</p>
+            )}
+          </div>
+
+          <div className="plan-detail panel">
+            <h3>계획 제어</h3>
+            <p>
+              실행 계획 상태: <strong>{board?.run?.plan_status || "pending"}</strong>
+            </p>
+            <div className="plan-actions">
+              <button onClick={handlePlanApprove} disabled={planLoading || !board}>
+                승인
+              </button>
+              <button onClick={handlePlanReject} disabled={planLoading || !board}>
+                반려
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <form className="composer" onSubmit={handleSendRequest}>
           <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="요청을 입력하세요. 예: 청계천의 변화와 역사 발표자료 작성"
+            value={composerText}
+            onChange={(e) => setComposerText(e.target.value)}
+            placeholder="요청을 입력하세요..."
           />
-          <button type="submit" disabled={!activeRunId || sending || !safeText(text)}>
-            {sending ? "전송 중..." : "요청 전송"}
+          <button type="submit" disabled={!composerText.trim() || sendingRequest}>
+            {sendingRequest ? "전송중…" : "요청 전송"}
           </button>
         </form>
       </main>
     </div>
   );
 }
+
+type TeamRunSnapshot = {
+  id: string;
+  title: string;
+  status: string;
+  plan_status?: string;
+  selected_agents?: string[];
+};
