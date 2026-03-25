@@ -22,16 +22,18 @@ const AUTO_REVIEW_PRESETS = [
 ] as const;
 
 const TASK_STATUS_COLUMNS = [
-  { key: "todo", label: "Todo" },
-  { key: "in_progress", label: "In Progress" },
-  { key: "review", label: "Review" },
-  { key: "done", label: "Done" },
+  { key: "todo", label: "할 일" },
+  { key: "in_progress", label: "진행 중" },
+  { key: "review", label: "검토 대기" },
+  { key: "done", label: "완료" },
 ];
 
 function statusLabel(status?: string) {
-  if (!status) return "unknown";
-  if (status === "in_progress") return "In Progress";
-  if (status === "done") return "Done";
+  if (!status) return "알 수 없음";
+  if (status === "in_progress") return "진행 중";
+  if (status === "done") return "완료";
+  if (status === "todo") return "할 일";
+  if (status === "review") return "검토 대기";
   return status.replace(/_/g, " ");
 }
 
@@ -52,6 +54,8 @@ export default function App() {
   const [sendingRequest, setSendingRequest] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+
   const [createTaskForm, setCreateTaskForm] = useState({
     title: "",
     description: "",
@@ -212,6 +216,7 @@ export default function App() {
       const snapshot = await approvePlan(activeRunId);
       setBoard(snapshot);
       setError("");
+      setIsPlanModalOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "계획 승인에 실패했습니다.");
     } finally {
@@ -222,11 +227,13 @@ export default function App() {
   async function handlePlanReject() {
     if (!activeRunId) return;
     const reason = window.prompt("반려 사유를 입력하세요.") || "";
+    if (!reason.trim()) return;
     setPlanLoading(true);
     try {
       const snapshot = await rejectPlan(activeRunId, reason);
       setBoard(snapshot);
       setError("");
+      setIsPlanModalOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "계획 반려에 실패했습니다.");
     } finally {
@@ -245,6 +252,7 @@ export default function App() {
       setError(err instanceof Error ? err.message : "작업 처리를 실패했습니다.");
     } finally {
       setPlanLoading(false);
+      setSelectedTaskId(null); // Optional: close modal after action
     }
   }
 
@@ -282,6 +290,7 @@ export default function App() {
       setBoard(snapshot);
       setCreateTaskForm((prev) => ({ ...prev, title: "", description: "" }));
       setError("");
+      setIsPlanModalOpen(false); // Optional: close modal after creation
     } catch (err) {
       setError(err instanceof Error ? err.message : "작업 생성에 실패했습니다.");
     } finally {
@@ -305,8 +314,8 @@ export default function App() {
     }));
   }, [board]);
 
-  const runStatus = board?.run?.status || "idle";
-  const runPlanStatus = board?.run?.plan_status || "pending";
+  const runStatus = board?.run?.status || "대기 중";
+  const runPlanStatus = board?.run?.plan_status || "대기 중";
   const taskCount = board?.tasks?.length || 0;
   const doneCount = (board?.tasks || []).filter((task) => task.status === "done").length;
 
@@ -317,11 +326,11 @@ export default function App() {
           <div className="brand-mark">DF</div>
           <div>
             <strong>DocFlow AI</strong>
-            <small>Agent Workspace Console</small>
+            <small>에이전트 워크스페이스</small>
           </div>
         </div>
         <div className="panel">
-          <h3 className="panel-title">Workspace Controls</h3>
+          <h3 className="panel-title">워크스페이스 설정</h3>
           <label>발신자</label>
           <input value={senderName} onChange={(e) => setSenderName(e.target.value)} />
           <label>개입 모드</label>
@@ -335,7 +344,7 @@ export default function App() {
             <option value="docx">DOCX</option>
             <option value="xlsx">XLSX</option>
           </select>
-          <label>자동 검토 프리셋</label>
+          <label>자동 검토 횟수</label>
           <select value={presetRounds} onChange={(e) => setPresetRounds(Number(e.target.value))}>
             {AUTO_REVIEW_PRESETS.map((item) => (
               <option key={item.value} value={item.value}>
@@ -352,7 +361,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h3 className="panel-title">Source Files</h3>
+          <h3 className="panel-title">참고 파일</h3>
           <label>참고 파일 업로드</label>
           <input type="file" multiple onChange={handleUpload} />
           <div className="file-list">
@@ -363,7 +372,7 @@ export default function App() {
         </div>
 
         <div className="panel">
-          <h3 className="panel-title">Team Members</h3>
+          <h3 className="panel-title">참여 에이전트</h3>
           <label>에이전트 선택</label>
           <div className="agent-picker">
             {agentHandles.map((handle) => (
@@ -390,7 +399,7 @@ export default function App() {
         </div>
 
         <div className="panel run-list">
-          <h3 className="panel-title">Runs</h3>
+          <h3 className="panel-title">워크스페이스 목록</h3>
           <label>워크스페이스</label>
           {runs.map((run) => (
             <button
@@ -398,8 +407,8 @@ export default function App() {
               className={run.id === activeRunId ? "run-item active" : "run-item"}
               onClick={() => setActiveRunId(run.id)}
             >
-              <div>{run.title || "Untitled"}</div>
-              <small>{run.status}</small>
+              <div>{run.title || "제목 없음"}</div>
+              <small>{statusLabel(run.status)}</small>
             </button>
           ))}
           {runs.length === 0 ? <p className="empty-state">생성된 워크스페이스가 없습니다.</p> : null}
@@ -412,57 +421,41 @@ export default function App() {
             <h2>{board?.run?.title || "워크스페이스"}</h2>
             <p className="header-subtitle">AI 팀 실행 상태를 실시간으로 확인하고 문서 결과물을 관리합니다.</p>
             <div className="status-row">
-              <span className="status-pill">Status: {runStatus}</span>
-              <span className="status-pill">Plan: {runPlanStatus}</span>
-              <span className="status-pill">Output: {board?.run?.output_type || outputType}</span>
-              <span className="status-pill">Tasks: {doneCount}/{taskCount}</span>
+              <span className="status-pill">상태: {runStatus}</span>
+              <span className="status-pill">계획: {runPlanStatus}</span>
+              <span className="status-pill">산출물: {board?.run?.output_type || outputType}</span>
+              <span className="status-pill">작업: {doneCount}/{taskCount}</span>
             </div>
           </div>
           <div className="header-actions">
-            <button onClick={() => handleExport("pptx")}>PPTX</button>
-            <button onClick={() => handleExport("docx")}>DOCX</button>
-            <button onClick={() => handleExport("xlsx")}>XLSX</button>
+            <button className="primary-action" onClick={() => setIsPlanModalOpen(true)}>계획 및 작업 관리</button>
           </div>
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
 
+        <article className="panel deliverable-panel-top">
+          <div className="panel-header-inline">
+            <h3>최종 결과물</h3>
+            <div className="deliverable-meta-top">
+              <button onClick={() => handleExport("pptx")} disabled={!board?.deliverable}>PPTX 다운로드</button>
+              <button onClick={() => handleExport("docx")} disabled={!board?.deliverable}>DOCX 다운로드</button>
+              <button onClick={() => handleExport("xlsx")} disabled={!board?.deliverable}>XLSX 다운로드</button>
+            </div>
+          </div>
+          <div className="deliverable-body">
+            {board?.deliverable?.content ? (
+              <pre>{board.deliverable.content}</pre>
+            ) : (
+              <p className="empty-state">아직 결과물이 없습니다.</p>
+            )}
+          </div>
+          <div className="deliverable-caption">
+            산출물은 Markdown 미리보기 기준이며, 우측 상단 버튼으로 형식별 파일을 내려받을 수 있습니다.
+          </div>
+        </article>
+
         <section className="workspace-grid">
-          <article className="panel activity-panel">
-            <h3>진행 현황</h3>
-            <div className="scroll-area">
-              {activityList.length === 0 ? (
-                <p className="empty-state">아직 활동 이력이 없습니다.</p>
-              ) : (
-                activityList.map((item, index) => (
-                  <div key={item.id} className="activity-item">
-                    <span className="activity-index">#{activityList.length - index}</span>
-                    <div>
-                      <p>{item.summary}</p>
-                      <small>{item.actor_handle || "system"} · {item.created_at}</small>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-
-          <article className="panel message-panel">
-            <h3>대화 로그</h3>
-            <div className="scroll-area">
-              {messageList.length === 0 ? (
-                <p className="empty-state">대화 내용이 없습니다.</p>
-              ) : (
-                messageList.map((message) => (
-                  <div key={message.id} className="message-item">
-                    <strong>{message.speaker_role || "user"}</strong>
-                    <p>{message.visible_message || message.raw_text || "내용 없음"}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-
           <article className="panel board-panel">
             <div className="panel-header">
               <h3>작업 보드</h3>
@@ -485,7 +478,7 @@ export default function App() {
                           onClick={() => setSelectedTaskId(task.id)}
                         >
                           <div className="task-title">{task.title}</div>
-                          <small>{task.owner_handle || "unassigned"}</small>
+                          <small>{task.owner_handle || "미할당"}</small>
                           <span className="task-status">{statusLabel(task.status)}</span>
                         </button>
                       ))
@@ -496,141 +489,41 @@ export default function App() {
             </div>
           </article>
 
-          <article className="panel deliverable-panel">
-            <h3>최종 결과물</h3>
-            <div className="deliverable-body">
-              {board?.deliverable?.content ? (
-                <pre>{board.deliverable.content}</pre>
-              ) : (
-                <p className="empty-state">아직 결과물이 없습니다.</p>
-              )}
-            </div>
-            <div className="deliverable-caption">
-              산출물은 Markdown 미리보기 기준이며, 아래 버튼으로 형식별 파일을 내려받을 수 있습니다.
-            </div>
-            <div className="deliverable-meta">
-              <button onClick={() => handleExport("pptx")} disabled={!board?.deliverable}>
-                PPTX 다운로드
-              </button>
-              <button onClick={() => handleExport("docx")} disabled={!board?.deliverable}>
-                DOCX 다운로드
-              </button>
-              <button onClick={() => handleExport("xlsx")} disabled={!board?.deliverable}>
-                XLSX 다운로드
-              </button>
-            </div>
-          </article>
-        </section>
-
-        <section className="detail-row">
-          <div className="task-detail">
-            {selectedTask ? (
-              <>
-                <h3>{selectedTask.title}</h3>
-                <p>{selectedTask.description}</p>
-                <dl>
-                  <div>
-                    <dt>담당</dt>
-                    <dd>{selectedTask.owner_handle || "없음"}</dd>
-                  </div>
-                  <div>
-                    <dt>상태</dt>
-                    <dd>{statusLabel(selectedTask.status)}</dd>
-                  </div>
-                  <div>
-                    <dt>우선순위</dt>
-                    <dd>{selectedTask.priority ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>리뷰 상태</dt>
-                    <dd>{selectedTask.review_state || "-"}</dd>
-                  </div>
-                </dl>
-                <div className="task-actions">
-                  <button onClick={() => handleTaskAction("rerun")}>Rerun</button>
-                  <button onClick={() => handleTaskAction("block")}>Block</button>
-                  <button onClick={() => handleTaskAction("unblock")}>Unblock</button>
-                  <button onClick={() => handleTaskAction("approve_review")}>Approve Review</button>
-                  <button onClick={() => handleTaskAction("reject_review")}>Reject Review</button>
-                </div>
-              </>
-            ) : (
-              <p className="empty-state">작업을 선택하면 세부 정보를 보여줍니다.</p>
-            )}
-          </div>
-
-          <div className="plan-detail panel stack-panel">
-            <section>
-              <h3>계획 제어</h3>
-              <p>
-                실행 계획 상태: <strong>{board?.run?.plan_status || "pending"}</strong>
-              </p>
-              <div className="plan-actions">
-                <button onClick={handlePlanApprove} disabled={planLoading || !board}>
-                  승인
-                </button>
-                <button onClick={handlePlanReject} disabled={planLoading || !board}>
-                  반려
-                </button>
+          <div className="logs-column">
+            <article className="panel activity-panel">
+              <h3>진행 현황</h3>
+              <div className="scroll-area limited-scroll">
+                {activityList.length === 0 ? (
+                  <p className="empty-state">아직 활동 이력이 없습니다.</p>
+                ) : (
+                  activityList.map((item, index) => (
+                    <div key={item.id} className="activity-item">
+                      <span className="activity-index">#{activityList.length - index}</span>
+                      <div>
+                        <p>{item.summary}</p>
+                        <small>{item.actor_handle || "시스템"} · {item.created_at}</small>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
-            </section>
+            </article>
 
-            <section className="create-task-panel">
-              <h3>작업 생성</h3>
-              <form onSubmit={handleCreateTask}>
-                <label>제목</label>
-                <input
-                  value={createTaskForm.title}
-                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, title: e.target.value }))}
-                />
-                <label>설명</label>
-                <textarea
-                  value={createTaskForm.description}
-                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, description: e.target.value }))}
-                />
-                <label>담당</label>
-                <select
-                  value={createTaskForm.ownerHandle}
-                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, ownerHandle: e.target.value }))}
-                >
-                  {(selectedAgents.length ? selectedAgents : agentHandles).map((handle) => (
-                    <option key={handle} value={handle}>
-                      {handle}
-                    </option>
-                  ))}
-                </select>
-                <label>산출물 목표</label>
-                <select
-                  value={createTaskForm.artifactGoal}
-                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, artifactGoal: e.target.value }))}
-                >
-                  <option value="draft">draft</option>
-                  <option value="review_notes">review_notes</option>
-                  <option value="final">final</option>
-                  <option value="decision">decision</option>
-                  <option value="brief">brief</option>
-                </select>
-                <label>우선순위</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={createTaskForm.priority}
-                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, priority: Number(e.target.value) }))}
-                />
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={createTaskForm.reviewRequired}
-                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, reviewRequired: e.target.checked }))}
-                  />
-                  <span>리뷰 필요</span>
-                </label>
-                <button type="submit" disabled={planLoading || !activeRunId}>
-                  작업 생성
-                </button>
-              </form>
-            </section>
+            <article className="panel message-panel">
+              <h3>대화 로그</h3>
+              <div className="scroll-area limited-scroll">
+                {messageList.length === 0 ? (
+                  <p className="empty-state">대화 내용이 없습니다.</p>
+                ) : (
+                  messageList.map((message) => (
+                    <div key={message.id} className="message-item">
+                      <strong>{message.speaker_role || "사용자"}</strong>
+                      <p>{message.visible_message || message.raw_text || "내용 없음"}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </article>
           </div>
         </section>
 
@@ -641,10 +534,131 @@ export default function App() {
             placeholder="요청을 입력하세요..."
           />
           <button type="submit" disabled={!composerText.trim() || sendingRequest}>
-            {sendingRequest ? "전송중…" : "요청 전송"}
+            {sendingRequest ? "전송 중…" : "요청 전송"}
           </button>
         </form>
       </main>
+
+      {/* Task Detail Modal */}
+      {selectedTaskId && selectedTask && (
+        <div className="modal-overlay" onClick={() => setSelectedTaskId(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{selectedTask.title}</h3>
+              <button className="modal-close" onClick={() => setSelectedTaskId(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p className="task-desc">{selectedTask.description}</p>
+              <dl className="task-info-grid">
+                <div>
+                  <dt>담당</dt>
+                  <dd>{selectedTask.owner_handle || "없음"}</dd>
+                </div>
+                <div>
+                  <dt>상태</dt>
+                  <dd>{statusLabel(selectedTask.status)}</dd>
+                </div>
+                <div>
+                  <dt>우선순위</dt>
+                  <dd>{selectedTask.priority ?? "-"}</dd>
+                </div>
+                <div>
+                  <dt>리뷰 상태</dt>
+                  <dd>{selectedTask.review_state || "-"}</dd>
+                </div>
+              </dl>
+              <div className="task-actions">
+                <button onClick={() => handleTaskAction("rerun")}>재실행</button>
+                <button onClick={() => handleTaskAction("block")}>진행 보류</button>
+                <button onClick={() => handleTaskAction("unblock")}>보류 해제</button>
+                <button onClick={() => handleTaskAction("approve_review")}>리뷰 승인</button>
+                <button onClick={() => handleTaskAction("reject_review")}>리뷰 반려</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan & Task Creation Modal */}
+      {isPlanModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsPlanModalOpen(false)}>
+          <div className="modal-content large" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>계획 및 작업 관리</h3>
+              <button className="modal-close" onClick={() => setIsPlanModalOpen(false)}>✕</button>
+            </div>
+            <div className="modal-body modal-grid">
+              <section className="plan-detail panel">
+                <h3>계획 제어</h3>
+                <p>
+                  실행 계획 상태: <strong className="status-highlight">{board?.run?.plan_status || "대기 중"}</strong>
+                </p>
+                <div className="plan-actions">
+                  <button onClick={handlePlanApprove} disabled={planLoading || !board}>승인</button>
+                  <button onClick={handlePlanReject} disabled={planLoading || !board}>반려</button>
+                </div>
+              </section>
+
+              <section className="create-task-panel panel">
+                <h3>작업 생성</h3>
+                <form onSubmit={handleCreateTask}>
+                  <label>제목</label>
+                  <input
+                    value={createTaskForm.title}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, title: e.target.value }))}
+                  />
+                  <label>설명</label>
+                  <textarea
+                    value={createTaskForm.description}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, description: e.target.value }))}
+                  />
+                  <label>담당</label>
+                  <select
+                    value={createTaskForm.ownerHandle}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, ownerHandle: e.target.value }))}
+                  >
+                    {(selectedAgents.length ? selectedAgents : agentHandles).map((handle) => (
+                      <option key={handle} value={handle}>
+                        {handle}
+                      </option>
+                    ))}
+                  </select>
+                  <label>산출물 목표</label>
+                  <select
+                    value={createTaskForm.artifactGoal}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, artifactGoal: e.target.value }))}
+                  >
+                    <option value="draft">초안 (draft)</option>
+                    <option value="review_notes">리뷰 노트 (review_notes)</option>
+                    <option value="final">최종본 (final)</option>
+                    <option value="decision">결정 (decision)</option>
+                    <option value="brief">요약 (brief)</option>
+                  </select>
+                  <label>우선순위</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={createTaskForm.priority}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, priority: Number(e.target.value) }))}
+                  />
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={createTaskForm.reviewRequired}
+                      onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, reviewRequired: e.target.checked }))}
+                    />
+                    <span>리뷰 필요</span>
+                  </label>
+                  <button type="submit" disabled={planLoading || !activeRunId} className="primary-action">
+                    작업 생성
+                  </button>
+                </form>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
