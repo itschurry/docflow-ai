@@ -305,14 +305,23 @@ export default function App() {
     }));
   }, [board]);
 
+  const runStatus = board?.run?.status || "idle";
+  const runPlanStatus = board?.run?.plan_status || "pending";
+  const taskCount = board?.tasks?.length || 0;
+  const doneCount = (board?.tasks || []).filter((task) => task.status === "done").length;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <strong>DocFlow AI</strong>
-          <small>Agent Team Workspace</small>
+          <div className="brand-mark">DF</div>
+          <div>
+            <strong>DocFlow AI</strong>
+            <small>Agent Workspace Console</small>
+          </div>
         </div>
         <div className="panel">
+          <h3 className="panel-title">Workspace Controls</h3>
           <label>발신자</label>
           <input value={senderName} onChange={(e) => setSenderName(e.target.value)} />
           <label>개입 모드</label>
@@ -343,6 +352,7 @@ export default function App() {
         </div>
 
         <div className="panel">
+          <h3 className="panel-title">Source Files</h3>
           <label>참고 파일 업로드</label>
           <input type="file" multiple onChange={handleUpload} />
           <div className="file-list">
@@ -353,6 +363,7 @@ export default function App() {
         </div>
 
         <div className="panel">
+          <h3 className="panel-title">Team Members</h3>
           <label>에이전트 선택</label>
           <div className="agent-picker">
             {agentHandles.map((handle) => (
@@ -379,6 +390,7 @@ export default function App() {
         </div>
 
         <div className="panel run-list">
+          <h3 className="panel-title">Runs</h3>
           <label>워크스페이스</label>
           {runs.map((run) => (
             <button
@@ -390,17 +402,21 @@ export default function App() {
               <small>{run.status}</small>
             </button>
           ))}
+          {runs.length === 0 ? <p className="empty-state">생성된 워크스페이스가 없습니다.</p> : null}
         </div>
       </aside>
 
       <main className="workspace">
         <header className="workspace-header">
-          <div>
+          <div className="header-main">
             <h2>{board?.run?.title || "워크스페이스"}</h2>
-            <p>
-              상태: <strong>{board?.run?.status || "idle"}</strong> | 계획: <strong>{board?.run?.plan_status || "-"}</strong> | 출력:{" "}
-              <strong>{board?.run?.output_type || outputType}</strong>
-            </p>
+            <p className="header-subtitle">AI 팀 실행 상태를 실시간으로 확인하고 문서 결과물을 관리합니다.</p>
+            <div className="status-row">
+              <span className="status-pill">Status: {runStatus}</span>
+              <span className="status-pill">Plan: {runPlanStatus}</span>
+              <span className="status-pill">Output: {board?.run?.output_type || outputType}</span>
+              <span className="status-pill">Tasks: {doneCount}/{taskCount}</span>
+            </div>
           </div>
           <div className="header-actions">
             <button onClick={() => handleExport("pptx")}>PPTX</button>
@@ -488,6 +504,9 @@ export default function App() {
               ) : (
                 <p className="empty-state">아직 결과물이 없습니다.</p>
               )}
+            </div>
+            <div className="deliverable-caption">
+              산출물은 Markdown 미리보기 기준이며, 아래 버튼으로 형식별 파일을 내려받을 수 있습니다.
             </div>
             <div className="deliverable-meta">
               <button onClick={() => handleExport("pptx")} disabled={!board?.deliverable}>
