@@ -144,3 +144,9 @@ export function createTask(
     }),
   });
 }
+
+export async function deleteTeamRun(runId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/web/team-runs/${runId}`, {
+    method: "DELETE",
+  });
+}
