@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.core.config import settings
@@ -22,13 +23,30 @@ app = FastAPI(title=settings.app_name,
 
 app.include_router(router)
 
+project_root = Path(__file__).resolve().parents[3]
+react_root = project_root / "apps" / "web-react"
+react_dist = react_root / "dist"
+react_assets = react_dist / "assets"
+react_index = react_dist / "index.html"
+legacy_workspace = react_root / "assets" / "legacy-workspace.html"
+
+if react_assets.exists():
+    app.mount("/assets", StaticFiles(directory=str(react_assets)), name="react-assets")
+
 
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse(url="/workspace")
+    if react_index.exists():
+        return FileResponse(str(react_index))
+    if legacy_workspace.exists():
+        return FileResponse(str(legacy_workspace))
+    return JSONResponse({"detail": "React UI is not available"}, status_code=503)
 
 
 @app.get("/workspace", include_in_schema=False)
 def workspace_page():
-    workspace_html = Path(__file__).resolve().parents[2] / "web" / "templates" / "team_chat.html"
-    return FileResponse(str(workspace_html))
+    if react_index.exists():
+        return FileResponse(str(react_index))
+    if legacy_workspace.exists():
+        return FileResponse(str(legacy_workspace))
+    return JSONResponse({"detail": "React UI is not available"}, status_code=503)
