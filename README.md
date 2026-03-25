@@ -1,163 +1,105 @@
 # DocFlow AI
 
-DocFlow AI Phase 1 kickoff workspace.
+DocFlow AI is an intelligent multi-agent platform designed for automated document analysis and generation. It leverages a specialized "Team Runtime" where multiple LLM-powered agents (Planner, Writer, Critic, Manager, etc.) collaborate to produce high-quality professional documents including Word, Excel, and PowerPoint files.
 
-## Implemented now
+## 🚀 Key Features
 
-- Monorepo directory scaffold from the design doc
-- PostgreSQL + SQLAlchemy integration with DB table models
-- Alembic migration infrastructure and initial schema revision
-- File upload endpoint and text extraction pipeline (TXT/MD/JSON/PDF/DOCX)
-- Planner + LLM provider routing (Stub/OpenAI/Anthropic)
-- Job dispatch and execution pipeline (inline default, Celery optional)
-- PromptLog persistence and retrieval endpoint
-- Real draft artifact generation (`md`, `docx`, `xlsx`, `pptx`)
-- File download endpoint for uploaded/generated assets
-- Role-based executor modules (parser/writer/spreadsheet/slide)
-- Project-level job history endpoint
-- Reviewer executor with deterministic quality scoring
-- Celery retry policy and dead-letter fallback logging
-- Dead-letter operational listing endpoint
-- Dead-letter replay endpoint with preview/requeue/delete controls
-- DB-backed Ops API key auth and replay audit retrieval endpoint
-- Configurable reviewer quality rules and threshold-based guidance
-- Dependency graph-based task orchestration for job execution
+- **Multi-Agent Orchestration**: Autonomous and guided handoffs between specialized agents.
+- **Team Runtime**: A persistent collaborative environment with session management, task dependencies, and activity logging.
+- **Advanced Document IR**: A unified Intermediate Representation pipeline that normalizes various formats (PDF, DOCX, XLSX, PPTX, HWP) for LLM processing.
+- **Rich Artifact Generation**: Native generation of `.docx`, `.xlsx`, and `.pptx` files using specialized executors.
+- **Modern Web Workspace**: A React-based SPA for visualizing agent collaboration, monitoring task boards, and managing document runs.
+- **Telegram Integration**: Full support for interacting with the orchestration engine via Telegram bots.
+- **Enterprise-Ready Ops**: DB-backed API key authentication, dead-letter job recovery, and detailed audit logging.
 
-## Structure
+## 🏗️ Project Structure
 
-- `apps/api`: FastAPI backend skeleton
-- `apps/web`: frontend placeholder
-- `services`: orchestration and processing services placeholders
-- `workers`: async worker placeholders
-- `packages`: shared schemas/utils placeholders
-- `templates`: report/excel/ppt template placeholders
-- `docs`: project docs
+- `apps/api`: FastAPI backend providing REST endpoints, orchestration engine, and team runtime.
+- `apps/web-react`: Modern React frontend built with Vite and TypeScript.
+- `apps/web`: (Legacy) Flask-based frontend placeholder.
+- `storage/`: Local persistent storage for database (`db/`), uploads, and dead-letter logs.
 
-## Run API (local)
+## 🛠️ Tech Stack
+
+- **Backend**: Python 3.10+, FastAPI, SQLAlchemy (PostgreSQL/SQLite), Alembic, Celery, Redis.
+- **Frontend**: React 18, Vite, TypeScript, Lucide Icons, Axios.
+- **AI/LLM**: Support for OpenAI, Anthropic, and Stub (dev) providers.
+- **Infrastructure**: Docker Compose for PostgreSQL/Redis, GitHub Actions for CI/CD.
+
+## 🏃 Getting Started
+
+### 1. Backend Setup (apps/api)
 
 ```bash
 cd apps/api
 cp .env.example .env
-/home/user/docflow-ai/.venv/bin/pip install -r requirements.txt
-docker compose -f docker-compose.postgres.yml up -d
-DATABASE_URL='postgresql+psycopg://docflow:docflow@localhost:5432/docflow' \
-PYTHONPATH=. /home/user/docflow-ai/.venv/bin/alembic upgrade head
+# Edit .env with your DATABASE_URL and LLM API keys
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Database Migration
+PYTHONPATH=. alembic upgrade head
+
+# Run FastAPI
 uvicorn app.main:app --reload --port 8000
 ```
 
-Before running API, prepare PostgreSQL and a database/user matching `DATABASE_URL`.
+### 2. Frontend Setup (apps/web-react)
 
-Default `DATABASE_URL`:
-
-```text
-postgresql+psycopg://docflow:docflow@localhost:5432/docflow
+```bash
+cd apps/web-react
+npm install
+npm run dev
 ```
+The frontend will be available at `http://localhost:5173`.
 
-Default execution mode:
+### 3. Background Workers (Optional)
 
-```text
-EXECUTION_BACKEND=inline
-```
-
-Optional Celery mode:
-
-```text
-EXECUTION_BACKEND=celery
-REDIS_URL=redis://localhost:6379/0
-QUEUE_MAX_RETRIES=3
-QUEUE_RETRY_DELAY_SECONDS=5
-DEAD_LETTER_DIR=storage/dead_letter
-OPS_API_TOKEN=change-this-secret
-```
-
-Run Celery worker (optional):
-
+If `EXECUTION_BACKEND=celery` is configured:
 ```bash
 cd apps/api
-PYTHONPATH=. /home/user/docflow-ai/.venv/bin/celery -A app.workers.tasks worker --loglevel=info
+celery -A app.workers.tasks worker --loglevel=info
 ```
 
-Health check:
+## 📋 API Overview
 
+### Core API
+- `POST /api/projects`: Manage document projects.
+- `POST /api/projects/{id}/files`: Upload source documents for analysis.
+- `POST /api/projects/{id}/jobs`: Dispatch traditional generation jobs.
+- `GET /api/jobs/{id}/status/stream`: Real-time job tracking via SSE.
+
+### Team Runtime (Web Workspace)
+- `POST /web/team-runs`: Initiate a multi-agent collaborative run.
+- `GET /web/team-runs/{id}/board`: Fetch the Kanban-style task board.
+- `POST /web/tasks/{id}/claim`: Allow agents/users to claim specific tasks.
+- `POST /web/team-runs/{id}/plan/approve`: Approve agent-generated execution plans.
+
+### Ops & Maintenance
+- `GET /api/ops/dead-letters`: List failed jobs in the dead-letter queue.
+- `POST /api/ops/dead-letters/replay`: Retry failed jobs with audit tracking.
+- `POST /api/ops/api-keys`: Manage administrative API keys.
+
+## 🧪 Testing & Validation
+
+Run the full test suite (unit + integration):
 ```bash
-curl http://127.0.0.1:8000/health
+cd apps/api
+PYTHONPATH=. pytest
 ```
 
-## PostgreSQL Full Validation
-
-Run full DB-backed validation (compose up -> migrate -> API run -> E2E smoke -> cleanup):
-
+Execute end-to-end smoke tests (requires Docker):
 ```bash
 cd apps/api
 ./scripts/postgres_full_check.sh
 ```
 
-Optional testcontainers-based validation (no compose file dependency):
+## 🛡️ Security & Quality
 
-```bash
-cd apps/api
-/home/user/docflow-ai/.venv/bin/python ./scripts/testcontainers_full_check.py
-```
+- **Reviewer Engine**: Automatic quality scoring based on configurable rules (length, keywords, TODO checks).
+- **Ops Auth**: Protected administrative endpoints via `X-Ops-Token` or DB-backed API Keys.
+- **Audit Logs**: Detailed tracking of dead-letter replays and critical system actions.
 
-## Integration Tests
-
-```bash
-cd apps/api
-PYTHONPATH=. /home/user/docflow-ai/.venv/bin/python -m pytest -q
-```
-
-## CI
-
-- GitHub Actions workflow: `.github/workflows/api-ci.yml`
-- Jobs:
-	- `pytest`: API test suite
-	- `postgres-smoke`: `./scripts/postgres_full_check.sh` end-to-end validation
-- Optional manual workflow: `.github/workflows/api-testcontainers.yml`
-	- `testcontainers-smoke`: `python ./scripts/testcontainers_full_check.py`
-
-## API baseline
-
-- `POST /api/projects`
-- `POST /api/projects/{project_id}/files`
-- `POST /api/projects/{project_id}/jobs`
-- `GET /api/projects/{project_id}/jobs`
-- `GET /api/jobs/{job_id}`
-- `GET /api/jobs/{job_id}/artifacts`
-- `GET /api/jobs/{job_id}/prompt-logs`
-- `GET /api/files/{file_id}/download`
-- `GET /api/ops/dead-letters`
-- `POST /api/ops/dead-letters/replay`
-- `POST /api/ops/api-keys`
-- `GET /api/ops/replay-audit`
-- `POST /api/jobs/{job_id}/retry`
-
-## Ops replay notes
-
-- `POST /api/ops/dead-letters/replay` supports preview by default (`requeue=false`).
-- Duplicate replay is blocked after first successful replay.
-- To override duplicate protection, set `force_requeue=true`.
-- If `OPS_API_TOKEN` is configured, send `X-Ops-Token` header for ops endpoints.
-- You can bootstrap DB-backed keys with `POST /api/ops/api-keys` and then use:
-	- `X-Ops-Key-Id: <key_id>`
-	- `X-Ops-Key-Secret: <key_secret>`
-- Replay events are written to `storage/dead_letter/replay_audit.jsonl` and readable via `GET /api/ops/replay-audit`.
-
-## UI and LLM API requirements
-
-- UI is optional. You can use this backend directly via REST API/curl/Postman.
-- OpenAI/Anthropic API keys are optional in development because `LLM_PROVIDER=stub` works without external APIs.
-- For production-grade AI output quality, configure either OpenAI or Anthropic provider and corresponding API key.
-
-## Reviewer quality rules
-
-- `REVIEW_MIN_LENGTH`, `REVIEW_LENGTH_PENALTY`
-- `REVIEW_TODO_PENALTY`
-- `REVIEW_REQUIRED_KEYWORDS`, `REVIEW_KEYWORD_PENALTY`
-- `REVIEW_REQUIRED_THRESHOLD`
-
-These rules drive `quality_score` and recommendation (`REVIEW_REQUIRED` or `READY_FOR_HUMAN_REVIEW`).
-
-## Next steps
-
-1. Expand Celery-mode integration tests to include live worker runs in CI
-2. Add optional real-provider smoke profile for OpenAI/Anthropic connectivity checks
+---
+© 2026 DocFlow AI Team. Built for autonomous professional productivity.
