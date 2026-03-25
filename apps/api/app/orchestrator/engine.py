@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.orchestrator.router import route
 from app.orchestrator.state_machine import ConversationStatus
 from app.orchestrator.validator import detect_progress, validate_dynamic_handoff
+from app.orchestrator.retrieval_policy import apply_retrieval_policy
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +344,7 @@ class OrchestratorEngine:
         last_msg_id = (conv.last_message_id if conv else None) or anchor_message_id
         termination_reason: str | None = None
         fallback_message: str | None = None
+        retrieval_retry_count: int = 0
 
         if missing_chain_handles:
             missing = ", ".join(missing_chain_handles)
@@ -425,6 +427,22 @@ class OrchestratorEngine:
                 no_progress_streak=no_progress_streak,
                 max_no_progress_handoffs=settings.orchestrator_max_no_progress_handoffs,
             )
+
+            # Retrieval status 기반 next-agent 보정 (TASK_03)
+            if not validation.terminate:
+                retrieval_policy = apply_retrieval_policy(
+                    current_handle=current_handle,
+                    approved_next_agent=validation.approved_next_agent,
+                    visible_message=execution.result.visible_message or "",
+                    retrieval_status=getattr(execution.result, "retrieval_status", None),
+                    retrieval_retry_count=retrieval_retry_count,
+                    fixed_chain_enabled=fixed_chain_enabled,
+                )
+                retrieval_retry_count = retrieval_policy.retrieval_retry_count
+                if retrieval_policy.override_next_agent:
+                    validation.approved_next_agent = retrieval_policy.override_next_agent
+                    validation.fallback_applied = True
+                    validation.validation_reason = retrieval_policy.reason
             if self._should_stop_early(execution.result):
                 validation.terminate = True
                 validation.termination_reason = "unsafe_or_refusal"

@@ -24,6 +24,7 @@ from app.services.executors.spreadsheet_executor import (
 from app.services.task_graph import get_ready_task_types
 from app.services.executors.writer_executor import run_writer_task
 from app.services.llm_router import get_llm_provider
+from app.services.retriever import build_rag_context
 
 
 class RetryableJobError(RuntimeError):
@@ -154,6 +155,18 @@ def execute_job(job_id: str) -> None:
                         "generate_report_outline",
                         "generate_report_draft",
                     }:
+                        # RAG context 빌드
+                        rag_result = build_rag_context(
+                            job.request_text,
+                            project_id=job.project_id,
+                            db=db,
+                            top_k=5,
+                        )
+                        # style 옵션은 job input_payload에서 읽음
+                        job_payload = task.input_payload_json or {}
+                        style_mode = job_payload.get("style_mode", "default")
+                        style_strength = job_payload.get("style_strength", "medium")
+
                         task.output_payload_json = run_writer_task(
                             db,
                             job=job,
@@ -169,7 +182,15 @@ def execute_job(job_id: str) -> None:
                             ),
                             provider_name=provider_name,
                             model_name=model_name,
+                            rag_result=rag_result,
+                            style_mode=style_mode,
+                            style_strength=style_strength,
                         )
+                        # retrieval status를 context에 기록 (orchestrator 참조용)
+                        ctx.set_output("retrieval_status", {
+                            "status": rag_result.retrieval_status.value,
+                            "chunk_count": rag_result.chunk_count,
+                        })
 
                     elif task.task_type == "review_report":
                         task.output_payload_json = run_qa_report(ctx)

@@ -77,6 +77,7 @@ from app.conversations.serializer import (
 )
 from app.orchestrator.engine import orchestrator
 from app.team_runtime.service import TeamRunService
+from app.services.indexing_service import index_file
 
 router = APIRouter()
 
@@ -606,6 +607,10 @@ def upload_file(
     db.add(file_row)
     db.commit()
     db.refresh(file_row)
+
+    index_result = index_file(file_row, db)
+    if index_result["chunk_count"] > 0:
+        db.commit()
 
     return UploadFileResponse(
         id=file_row.id,

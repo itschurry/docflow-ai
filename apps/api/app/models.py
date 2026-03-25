@@ -116,3 +116,57 @@ class OpsApiKeyModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_utc, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class DocumentChunkModel(Base):
+    """RAG 파이프라인용 문서 청크 저장소."""
+    __tablename__ = "document_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("files.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    document_type: Mapped[str] = mapped_column(String(50), default="", nullable=False)
+    section: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    page_hint: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # indexed | failed
+    index_status: Mapped[str] = mapped_column(String(30), default="indexed", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=now_utc, nullable=False)
+
+
+class StylePatternModel(Base):
+    """회사 문체/표현 패턴 저장소 (RAG context와 분리된 style layer)."""
+    __tablename__ = "style_patterns"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("files.id", ondelete="SET NULL"),
+    )
+    section: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # sentence_structure | expression | tone | transition
+    pattern_type: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=now_utc, nullable=False)

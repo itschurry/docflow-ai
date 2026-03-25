@@ -2,7 +2,30 @@ from app.core.time_utils import now_utc
 from app.models import JobModel, PromptLogModel, TaskModel
 from app.services.executors.context import ExecutionContext
 from app.services.file_generators import generate_report_docx
+from app.services.retriever import RagResult, RetrievalStatus
+from app.services.style_retriever import build_style_context
 
+
+def _build_rag_section(rag_result: RagResult | None) -> str:
+    """RAG context를 프롬프트 삽입용 텍스트 블록으로 변환한다."""
+    if not rag_result or not rag_result.context_text:
+        return ""
+    status_note = {
+        RetrievalStatus.OK: "",
+        RetrievalStatus.WEAK: "\n⚠️ 검색 결과가 약합니다. 근거 부족 시 '검증 필요'를 명시하세요.",
+        RetrievalStatus.EMPTY: "\n⚠️ 검색 결과가 없습니다. 참고 자료 없이 작성 중임을 명시하세요.",
+        RetrievalStatus.CONFLICT: "\n⚠️ 출처 간 내용 충돌이 감지되었습니다. 상충되는 내용은 병기하세요.",
+    }.get(rag_result.retrieval_status, "")
+    return (
+        f"## 참고 자료 (RAG Context){status_note}\n\n"
+        f"{rag_result.context_text}"
+    )
+
+
+def _build_style_section(style_ctx: str) -> str:
+    if not style_ctx:
+        return ""
+    return f"## 문체 참고 (Style Context)\n\n{style_ctx}"
 
 import re as _re
 
@@ -189,14 +212,43 @@ def run_writer_task(
     persist_generated_file,
     provider_name: str,
     model_name: str,
+    rag_result: "RagResult | None" = None,
+    style_mode: str = "default",
+    style_strength: str = "medium",
 ) -> dict:
-    prompt = f"task={task.task_type} request={job.request_text}"
+    # RAG context 블록
+    rag_section = _build_rag_section(rag_result)
+
+    # Style context 블록 (RAG와 분리)
+    style_ctx = build_style_context(
+        section=task.task_type,
+        project_id=job.project_id,
+        db=db,
+        style_mode=style_mode,
+        strength=style_strength,
+    )
+    style_section = _build_style_section(style_ctx)
+
+    # 프롬프트 조립: rag_context + style_context → 본문 생성 지시
+    prompt_parts = [f"task={task.task_type} request={job.request_text}"]
+    if rag_section:
+        prompt_parts.append(rag_section)
+    if style_section:
+        prompt_parts.append(style_section)
+    prompt = "\n\n".join(prompt_parts)
+
     response_text = run_generate_text(prompt)
 
     if task.task_type == "generate_report_draft" and provider_name == "stubllm":
         response_text = _build_stub_business_plan_draft(job, ctx)
 
-    payload = {"text": response_text}
+    payload = {
+        "text": response_text,
+        "rag_status": (rag_result.retrieval_status.value if rag_result else "EMPTY"),
+        "rag_chunk_count": (rag_result.chunk_count if rag_result else 0),
+        "style_mode": style_mode,
+        "style_strength": style_strength,
+    }
 
     if task.task_type == "generate_report_draft":
         md_artifact = persist_generated_file(
