@@ -15,8 +15,7 @@ DocFlow AI is an intelligent multi-agent platform designed for automated documen
 ## 🏗️ Project Structure
 
 - `apps/api`: FastAPI backend providing REST endpoints, orchestration engine, and team runtime.
-- `apps/web-react`: Modern React frontend built with Vite and TypeScript.
-- `apps/web`: (Legacy) Flask-based frontend placeholder.
+- `apps/web`: Modern React frontend built with Vite and TypeScript.
 - `storage/`: Local persistent storage for database (`db/`), uploads, and dead-letter logs.
 
 ## 🛠️ Tech Stack
@@ -42,7 +41,8 @@ pip install -r requirements.txt
 PYTHONPATH=. alembic upgrade head
 
 # Run FastAPI
-uvicorn app.main:app --reload --port 8000
+cd ~/docflow-ai
+uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port 800
 ```
 
 ### 2. Frontend Setup (apps/web-react)
@@ -51,6 +51,7 @@ uvicorn app.main:app --reload --port 8000
 cd apps/web-react
 npm install
 npm run dev
+npm run build
 ```
 The frontend will be available at `http://localhost:5173`.
 
