@@ -2,7 +2,7 @@ from app.core.config import settings
 from app.services.executors.context import ExecutionContext
 
 
-def run_review_report(ctx: ExecutionContext) -> dict:
+def run_qa_report(ctx: ExecutionContext) -> dict:
     draft_text = (ctx.get_output("generate_report_draft")
                   or {}).get("text", "")
     normalized_text = draft_text.strip()

@@ -14,7 +14,7 @@ from app.services.document_ir import parse_document_to_ir
 from app.services.document_ir import summarize_document_ir
 from app.services.executors.context import ExecutionContext
 from app.services.executors.parser_executor import run_parse_reference_docs
-from app.services.executors.reviewer_executor import run_review_report
+from app.services.executors.qa_executor import run_qa_report
 from app.services.executors.slide_executor import run_generate_ppt, run_slide_text_task
 from app.services.executors.spreadsheet_executor import (
     run_budget_rules,
@@ -172,7 +172,7 @@ def execute_job(job_id: str) -> None:
                         )
 
                     elif task.task_type == "review_report":
-                        task.output_payload_json = run_review_report(ctx)
+                        task.output_payload_json = run_qa_report(ctx)
 
                     elif task.task_type in {"generate_slide_outline", "generate_slide_body"}:
                         task.output_payload_json = run_slide_text_task(

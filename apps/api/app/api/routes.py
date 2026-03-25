@@ -2438,7 +2438,7 @@ def _extract_web_deliverable(
             )
             if artifact and artifact.content.strip():
                 return to_payload(artifact)
-        for owner_group in (("writer",), ("planner", "manager", "critic", "reviewer")):
+        for owner_group in (("writer",), ("planner", "manager", "critic")):
             draft_task_ids = [
                 task.id
                 for task in tasks
@@ -2478,7 +2478,7 @@ def _extract_web_deliverable(
     def body_of(msg) -> str:
         return (msg.visible_message or msg.raw_text or "").strip()
 
-    priorities = ("manager", "writer", "planner", "critic", "reviewer")
+    priorities = ("manager", "writer", "planner", "critic")
     for role in priorities:
         for msg in rows:
             if (msg.speaker_role or "") != role:

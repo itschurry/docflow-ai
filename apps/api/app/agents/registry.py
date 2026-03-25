@@ -13,7 +13,6 @@ from app.agents.critic import make_critic
 from app.agents.manager import make_manager
 from app.agents.planner import make_planner
 from app.agents.qa import make_qa
-from app.agents.reviewer import make_reviewer
 from app.agents.writer import make_writer
 
 if TYPE_CHECKING:
@@ -24,13 +23,12 @@ _FACTORIES = {
     "writer": make_writer,
     "critic": make_critic,
     "coder": make_coder,
-    "reviewer": make_reviewer,
     "qa": make_qa,
     "manager": make_manager,
 }
 
 # Pipeline execution order
-PIPELINE_ORDER = ["planner", "writer", "critic", "reviewer", "qa", "manager"]
+PIPELINE_ORDER = ["planner", "writer", "critic", "qa", "manager"]
 
 
 def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
