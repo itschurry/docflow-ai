@@ -1,5 +1,44 @@
 export type OutputType = "docx" | "xlsx" | "pptx";
 export type OversightMode = "auto" | "manual";
+export type ReferenceMode = "auto" | "all" | "selected";
+export type StyleMode = "default" | "formal" | "concise" | "friendly";
+export type StyleStrength = "low" | "medium" | "high";
+export type IndexStatus = "indexed" | "failed" | "not_indexed";
+
+export interface RagConfig {
+  reference_mode?: ReferenceMode;
+  style_mode?: StyleMode;
+  style_strength?: StyleStrength;
+}
+
+export interface KnowledgeFile {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  document_type: string;
+  document_summary: string;
+  created_at?: string;
+  chunk_count: number;
+  index_status: IndexStatus;
+}
+
+export interface ChunkItem {
+  id: string;
+  section: string;
+  chunk_index: number;
+  content: string;
+  index_status: IndexStatus;
+}
+
+export interface SourceFile {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  document_type?: string;
+  document_summary?: string;
+  chunk_count?: number;
+  index_status?: IndexStatus;
+}
 
 export interface TeamRun {
   id: string;
@@ -12,6 +51,7 @@ export interface TeamRun {
   selected_agents?: string[];
   requested_by?: string;
   request_text?: string;
+  rag_config?: RagConfig;
 }
 
 export interface ConversationMessage {
@@ -77,6 +117,7 @@ export interface TeamBoardSnapshot {
   deliverable?: DeliverableItem | null;
   tasks?: TeamTask[];
   messages?: TeamMessage[];
+  source_files?: SourceFile[];
 }
 
 export interface FileUploadItem {

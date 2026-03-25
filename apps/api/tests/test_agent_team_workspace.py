@@ -155,7 +155,7 @@ def test_web_chat_enforces_required_chain_roles(client):
     )
     assert created.status_code == 201
     conv = created.json()
-    assert conv["selected_agents"] == ["planner", "writer", "critic", "manager"]
+    assert conv["selected_agents"] == ["planner", "writer", "critic", "qa", "manager"]
 
     updated = client.put(
         f"/web/chats/{conv['id']}/agents",
@@ -163,7 +163,7 @@ def test_web_chat_enforces_required_chain_roles(client):
     )
     assert updated.status_code == 200
     selected = updated.json()["conversation"]["selected_agents"]
-    assert selected == ["planner", "critic", "writer", "manager"]
+    assert selected == ["planner", "critic", "writer", "qa", "manager"]
 
 
 def test_team_run_request_bootstraps_board_and_activity(client):

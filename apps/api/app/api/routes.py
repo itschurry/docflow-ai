@@ -20,7 +20,7 @@ from app.core.database import SessionLocal, get_db
 from app.core.state_machine import JobStatus
 from app.core.time_utils import now_utc
 from app import conversation_models
-from app.models import FileModel, JobModel, ProjectModel, PromptLogModel, TaskModel
+from app.models import DocumentChunkModel, FileModel, JobModel, ProjectModel, PromptLogModel, TaskModel
 from app.schemas.plan import PlanResult
 from app.schemas.request_response import (
     ArtifactSummary,
@@ -633,6 +633,65 @@ def upload_web_file(
 ) -> UploadFileResponse:
     project = _ensure_web_upload_project(db)
     return upload_file(project.id, uploaded_file, db)
+
+
+@router.get("/web/knowledge", status_code=200)
+def list_web_knowledge(db: Session = Depends(get_db)):
+    """List all files in the web upload project with chunk counts and index status."""
+    project = _ensure_web_upload_project(db)
+    files = db.execute(
+        select(FileModel)
+        .where(FileModel.project_id == project.id)
+        .order_by(FileModel.created_at.desc())
+    ).scalars().all()
+
+    result = []
+    for f in files:
+        chunks = db.execute(
+            select(DocumentChunkModel)
+            .where(DocumentChunkModel.file_id == f.id)
+        ).scalars().all()
+        chunk_count = len(chunks)
+        failed_count = sum(1 for c in chunks if c.index_status == "failed")
+        if chunk_count == 0:
+            index_status = "not_indexed"
+        elif failed_count == chunk_count:
+            index_status = "failed"
+        else:
+            index_status = "indexed"
+        result.append({
+            "id": str(f.id),
+            "original_name": f.original_name,
+            "mime_type": f.mime_type,
+            "document_type": f.document_type or "",
+            "document_summary": f.document_summary or "",
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+            "chunk_count": chunk_count,
+            "index_status": index_status,
+        })
+    return {"items": result}
+
+
+@router.get("/web/knowledge/{file_id}/chunks", status_code=200)
+def list_web_knowledge_chunks(file_id: UUID, db: Session = Depends(get_db)):
+    """List document chunks for a specific file (for evidence panel)."""
+    chunks = db.execute(
+        select(DocumentChunkModel)
+        .where(DocumentChunkModel.file_id == file_id)
+        .order_by(DocumentChunkModel.chunk_index)
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(c.id),
+                "section": c.section or "",
+                "chunk_index": c.chunk_index,
+                "content": c.content[:500],
+                "index_status": c.index_status,
+            }
+            for c in chunks
+        ]
+    }
 
 
 @router.post("/api/projects/{project_id}/jobs", response_model=CreateJobResponse)
@@ -1709,6 +1768,14 @@ async def send_web_team_run_request(
         run.output_type = _infer_output_type_from_request_text(text)
     if auto_review_max_rounds is not None:
         run.auto_review_max_rounds = _normalize_auto_review_max_rounds(auto_review_max_rounds)
+    reference_mode = str(payload.get("reference_mode") or "auto").strip()
+    style_mode = str(payload.get("style_mode") or "default").strip()
+    style_strength = str(payload.get("style_strength") or "medium").strip()
+    run.rag_config = {
+        "reference_mode": reference_mode,
+        "style_mode": style_mode,
+        "style_strength": style_strength,
+    }
 
     conv = db.get(conversation_models.ConversationModel, run.conversation_id)
     if not conv:
@@ -3842,6 +3909,26 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
         )
     deliverable = _extract_web_deliverable(db, run.conversation_id, run=run) if run.conversation_id else None
     source_files, _ = _collect_source_files(db, list(run.source_file_ids or []))
+    # Pre-compute chunk counts for source files
+    from sqlalchemy import func
+    chunk_counts: dict[str, dict] = {}
+    if source_files:
+        for file_row in source_files:
+            total = db.execute(
+                select(func.count()).select_from(DocumentChunkModel)
+                .where(DocumentChunkModel.file_id == file_row.id)
+            ).scalar() or 0
+            ok = db.execute(
+                select(func.count()).select_from(DocumentChunkModel)
+                .where(
+                    DocumentChunkModel.file_id == file_row.id,
+                    DocumentChunkModel.index_status == "indexed",
+                )
+            ).scalar() or 0
+            chunk_counts[str(file_row.id)] = {
+                "chunk_count": total,
+                "index_status": "indexed" if ok > 0 else ("not_indexed" if total == 0 else "failed"),
+            }
     payload = {
         "run": serialize_team_run(run),
         "conversation": serialize_conversation(conv) if conv else None,
@@ -3868,6 +3955,8 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
                 "document_type": analysis["document_type"],
                 "document_summary": analysis["document_summary"],
                 "document_ir": analysis["document_ir"],
+                "chunk_count": chunk_counts.get(str(file_row.id), {}).get("chunk_count", 0),
+                "index_status": chunk_counts.get(str(file_row.id), {}).get("index_status", "not_indexed"),
             }
             for file_row in source_files
             for analysis in [_file_analysis_payload(file_row)]
@@ -3879,6 +3968,7 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     payload["run"]["workflow_preset"] = _run_workflow_preset(run)
     payload["run"]["auto_review_max_rounds"] = _run_auto_review_max_rounds(run)
     payload["run"]["auto_review_rounds_used"] = auto_review_rounds_used
+    payload["run"]["rag_config"] = run.rag_config or {}
     return payload
 
 
@@ -4170,8 +4260,18 @@ async def _execute_team_task(
             else "",
             inbox_context,
             "기존 작업공간:\n" + "\n\n".join(artifact_lines) if artifact_lines else "",
+            (
+                lambda _cfg: f"문체 설정: {_cfg['style_mode']} (강도: {_cfg.get('style_strength','medium')})"
+                if _cfg.get("style_mode") and _cfg["style_mode"] != "default" else ""
+            )(run.rag_config or {}),
         )
         if part
+    )
+    rag_cfg = run.rag_config or {}
+    style_line = (
+        f"- 문체 설정: {rag_cfg['style_mode']} (강도: {rag_cfg.get('style_strength','medium')})"
+        if rag_cfg.get("style_mode") and rag_cfg["style_mode"] != "default"
+        else None
     )
     user_request = (
         "\n".join(
@@ -4184,6 +4284,7 @@ async def _execute_team_task(
                 f"- 작업 설명: {task.description}",
                 f"- 원요청: {run.request_text}",
                 f"- 참고 문서 요약:\n{run.source_ir_summary}" if run.source_ir_summary else "",
+                style_line,
                 "",
                 inbox_context if inbox_context else "",
                 rework_clause.strip() if rework_clause else "",

@@ -13,8 +13,10 @@ import {
   updateTask,
   uploadFile,
   deleteTeamRun,
+  listKnowledgeFiles,
+  getFileChunks,
 } from "./api";
-import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot } from "./types";
+import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
 
 const AUTO_REVIEW_PRESETS = [
   { label: "보수적 (2회)", value: 2 },
@@ -233,6 +235,17 @@ export default function App() {
       (!localStorage.getItem("theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
   });
 
+  // TASK_05 - Knowledge & RAG UI state
+  const [knowledgeFiles, setKnowledgeFiles] = useState<KnowledgeFile[]>([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
+  const [expandedFileId, setExpandedFileId] = useState<string | null>(null);
+  const [fileChunks, setFileChunks] = useState<Record<string, ChunkItem[]>>({});
+  const [referenceMode, setReferenceMode] = useState<ReferenceMode>("auto");
+  const [styleMode, setStyleMode] = useState<StyleMode>("default");
+  const [styleStrength, setStyleStrength] = useState<StyleStrength>("medium");
+  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
+
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add("dark");
@@ -246,6 +259,7 @@ export default function App() {
   useEffect(() => {
     void refreshAgents();
     void refreshRuns();
+    void refreshKnowledge();
   }, []);
 
   useEffect(() => {
@@ -294,6 +308,34 @@ export default function App() {
     }
   }
 
+  async function refreshKnowledge() {
+    setKnowledgeLoading(true);
+    try {
+      const items = await listKnowledgeFiles();
+      setKnowledgeFiles(items);
+    } catch {
+      // silent - knowledge endpoint may be empty
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  }
+
+  async function handleToggleChunks(fileId: string) {
+    if (expandedFileId === fileId) {
+      setExpandedFileId(null);
+      return;
+    }
+    setExpandedFileId(fileId);
+    if (!fileChunks[fileId]) {
+      try {
+        const chunks = await getFileChunks(fileId);
+        setFileChunks((prev) => ({ ...prev, [fileId]: chunks }));
+      } catch {
+        // silent
+      }
+    }
+  }
+
   async function handleCreateRun() {
     setLoadingRuns(true);
     try {
@@ -326,10 +368,18 @@ export default function App() {
     if (!activeRunId || !composerText.trim() || sendingRequest) return;
     setSendingRequest(true);
     try {
+      const sourceIds = referenceMode === "selected"
+        ? selectedKnowledgeIds
+        : referenceMode === "all"
+          ? knowledgeFiles.map((f) => f.id)
+          : files.map((item) => item.id);
       const snapshot = await sendRequest(activeRunId, {
         text: composerText.trim(), senderName: "USER",
         outputType, autoReviewMaxRounds: presetRounds,
-        sourceFileIds: files.map((item) => item.id),
+        sourceFileIds: sourceIds,
+        referenceMode,
+        styleMode,
+        styleStrength,
       });
       setBoard(snapshot);
       setComposerText("");
@@ -357,6 +407,7 @@ export default function App() {
         const item = await uploadFile(file);
         setFiles((prev) => [...prev, item]);
       }
+      void refreshKnowledge();
     } catch {
       setError("파일 업로드 실패");
     } finally {
@@ -552,6 +603,101 @@ export default function App() {
             </div>
           </div>
 
+          {/* Knowledge Library */}
+          <div className="nav-group">
+            <h2 className="nav-label">
+              지식 라이브러리
+              <button
+                className="icon-btn"
+                onClick={() => { setIsKnowledgeOpen(!isKnowledgeOpen); if (!isKnowledgeOpen) void refreshKnowledge(); }}
+                title="새로고침"
+              >
+                {knowledgeLoading ? "⟳" : "📚"}
+              </button>
+            </h2>
+            {isKnowledgeOpen && (
+              <div className="knowledge-list">
+                {knowledgeFiles.length === 0 ? (
+                  <p className="empty-notice">업로드된 파일 없음</p>
+                ) : (
+                  knowledgeFiles.map((kf) => (
+                    <div key={kf.id} className={`knowledge-card ${selectedKnowledgeIds.includes(kf.id) ? "selected" : ""}`}>
+                      <div className="knowledge-card-header" onClick={() => {
+                        const next = selectedKnowledgeIds.includes(kf.id)
+                          ? selectedKnowledgeIds.filter((id) => id !== kf.id)
+                          : [...selectedKnowledgeIds, kf.id];
+                        setSelectedKnowledgeIds(next);
+                      }}>
+                        <span className={`index-badge ${kf.index_status}`}>
+                          {kf.index_status === "indexed" ? "✓" : kf.index_status === "failed" ? "✗" : "○"}
+                        </span>
+                        <span className="knowledge-name">{kf.original_name}</span>
+                        <span className="chunk-count">{kf.chunk_count}청크</span>
+                        <button
+                          className="icon-btn sm"
+                          onClick={(e) => { e.stopPropagation(); void handleToggleChunks(kf.id); }}
+                          title="근거 문단 보기"
+                        >
+                          {expandedFileId === kf.id ? "▲" : "▼"}
+                        </button>
+                      </div>
+                      {expandedFileId === kf.id && (
+                        <div className="chunk-preview-list">
+                          {(fileChunks[kf.id] ?? []).map((chunk) => (
+                            <div key={chunk.id} className="chunk-preview-item">
+                              <span className="chunk-section">{chunk.section || `청크 ${chunk.chunk_index + 1}`}</span>
+                              <p className="chunk-text">{chunk.content}</p>
+                            </div>
+                          ))}
+                          {(fileChunks[kf.id] ?? []).length === 0 && (
+                            <p className="empty-notice">청크 없음</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* RAG & Style Config */}
+          <div className="nav-group">
+            <h2 className="nav-label">참고·문체 설정</h2>
+            <div className="config-card">
+              <div className="config-field">
+                <label>참고 모드</label>
+                <select value={referenceMode} onChange={(e) => setReferenceMode(e.target.value as ReferenceMode)}>
+                  <option value="auto">자동 추천</option>
+                  <option value="all">전체 라이브러리</option>
+                  <option value="selected">선택한 자료만</option>
+                </select>
+              </div>
+              <div className="config-field">
+                <label>문체 모드</label>
+                <select value={styleMode} onChange={(e) => setStyleMode(e.target.value as StyleMode)}>
+                  <option value="default">기본</option>
+                  <option value="formal">격식체</option>
+                  <option value="concise">간결체</option>
+                  <option value="friendly">친근체</option>
+                </select>
+              </div>
+              {styleMode !== "default" && (
+                <div className="config-field">
+                  <label>문체 강도</label>
+                  <select value={styleStrength} onChange={(e) => setStyleStrength(e.target.value as StyleStrength)}>
+                    <option value="low">약하게</option>
+                    <option value="medium">보통</option>
+                    <option value="high">강하게</option>
+                  </select>
+                </div>
+              )}
+              {referenceMode === "selected" && selectedKnowledgeIds.length > 0 && (
+                <p className="config-hint">{selectedKnowledgeIds.length}개 파일 선택됨</p>
+              )}
+            </div>
+          </div>
+
           {/* Workspace list */}
           <div className="nav-group flex-fill">
             <h2 className="nav-label flex-header">
@@ -664,6 +810,41 @@ export default function App() {
                       )
                     }
                   </div>
+
+                  {/* RAG Sources Panel */}
+                  {board?.source_files && board.source_files.length > 0 && (
+                    <div className="rag-sources-panel">
+                      <header className="sources-header">
+                        <span className="sources-title">📎 참고 자료</span>
+                        {board.run?.rag_config?.reference_mode && (
+                          <span className="rag-mode-badge">
+                            {board.run.rag_config.reference_mode === "auto" ? "자동" :
+                             board.run.rag_config.reference_mode === "all" ? "전체" : "선택"}
+                          </span>
+                        )}
+                      </header>
+                      <div className="sources-list">
+                        {board.source_files.map((sf) => (
+                          <div key={sf.id} className="source-chip">
+                            <span className={`index-badge sm ${sf.index_status ?? "not_indexed"}`}>
+                              {sf.index_status === "indexed" ? "✓" : sf.index_status === "failed" ? "✗" : "○"}
+                            </span>
+                            <span className="source-name">{sf.original_name}</span>
+                            {sf.chunk_count !== undefined && sf.chunk_count > 0 && (
+                              <span className="source-chunks">{sf.chunk_count}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {board.run?.rag_config?.style_mode && board.run.rag_config.style_mode !== "default" && (
+                        <div className="style-badge-row">
+                          <span className="style-badge">
+                            문체: {board.run.rag_config.style_mode} · {board.run.rag_config.style_strength ?? "medium"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
 
                 {/* Kanban */}

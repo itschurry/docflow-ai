@@ -1,4 +1,4 @@
-import type { OutputType, OversightMode, TeamBoardSnapshot, TeamRun } from "./types";
+import type { OutputType, OversightMode, TeamBoardSnapshot, TeamRun, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -46,9 +46,28 @@ export function getBoard(runId: string): Promise<TeamBoardSnapshot> {
   return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/board`);
 }
 
+export async function listKnowledgeFiles(): Promise<KnowledgeFile[]> {
+  const data = await request<{ items: KnowledgeFile[] }>("/web/knowledge");
+  return data.items || [];
+}
+
+export async function getFileChunks(fileId: string): Promise<ChunkItem[]> {
+  const data = await request<{ items: ChunkItem[] }>(`/web/knowledge/${fileId}/chunks`);
+  return data.items || [];
+}
+
 export function sendRequest(
   runId: string,
-  payload: { text: string; senderName: string; outputType: OutputType; autoReviewMaxRounds: number; sourceFileIds: string[] },
+  payload: {
+    text: string;
+    senderName: string;
+    outputType: OutputType;
+    autoReviewMaxRounds: number;
+    sourceFileIds: string[];
+    referenceMode?: ReferenceMode;
+    styleMode?: StyleMode;
+    styleStrength?: StyleStrength;
+  },
 ): Promise<TeamBoardSnapshot> {
   return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/requests`, {
     method: "POST",
@@ -59,6 +78,9 @@ export function sendRequest(
       output_type: payload.outputType,
       auto_review_max_rounds: payload.autoReviewMaxRounds,
       source_file_ids: payload.sourceFileIds,
+      reference_mode: payload.referenceMode ?? "auto",
+      style_mode: payload.styleMode ?? "default",
+      style_strength: payload.styleStrength ?? "medium",
     }),
   });
 }
