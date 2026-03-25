@@ -100,7 +100,7 @@ class BaseAgent(ABC):
             "반드시 아래 JSON 객체 하나만 출력하세요 (설명 금지):\n"
             "{\n"
             '  "visible_message": "텔레그램에 바로 게시 가능한 자연스러운 발화",\n'
-            '  "suggested_next_agent": "planner|writer|critic|reviewer|manager 또는 null",\n'
+            '  "suggested_next_agent": "planner|writer|critic|qa|manager 또는 null",\n'
             '  "handoff_reason": "다음 에이전트를 제안한 이유",\n'
             '  "task_status": "현재 작업 상태 문자열",\n'
             '  "done": false,\n'
@@ -148,7 +148,8 @@ class BaseAgent(ABC):
         alternatives = _to_str_list(parsed.get("alternative_next_agents"))
         missing = _to_str_list(parsed.get("missing_information"))
         recommended_mode = parsed.get("recommended_mode")
-        recommended_mode = str(recommended_mode).strip() if recommended_mode else None
+        recommended_mode = str(
+            recommended_mode).strip() if recommended_mode else None
         artifact_update = _parse_artifact_update(parsed.get("artifact_update"))
         visible = _normalize_visible_message(
             handle=self.config.handle,
@@ -274,14 +275,16 @@ def _recover_json_like_payload(text: str) -> dict[str, Any]:
 
 
 def _extract_json_like_string(text: str, field: str) -> str | None:
-    match = re.search(rf'"{re.escape(field)}"\s*:\s*"((?:[^"\\]|\\.|"(?!\s*,\s*"[A-Za-z_]))*)"', text, re.DOTALL)
+    match = re.search(
+        rf'"{re.escape(field)}"\s*:\s*"((?:[^"\\]|\\.|"(?!\s*,\s*"[A-Za-z_]))*)"', text, re.DOTALL)
     if not match:
         return None
     return _decode_json_like_string(match.group(1))
 
 
 def _extract_json_like_bool(text: str, field: str) -> bool | None:
-    match = re.search(rf'"{re.escape(field)}"\s*:\s*(true|false)', text, re.IGNORECASE)
+    match = re.search(
+        rf'"{re.escape(field)}"\s*:\s*(true|false)', text, re.IGNORECASE)
     if not match:
         return None
     return match.group(1).lower() == "true"
