@@ -1,12 +1,15 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   approvePlan,
+  createTask,
   createTeamRun,
   exportDeliverable,
   getBoard,
   listAgents,
   listTeamRuns,
+  rejectPlan,
   sendRequest,
+  updateRunAgents,
   updateTask,
   uploadFile,
 } from "./api";
@@ -36,6 +39,8 @@ export default function App() {
   const [runs, setRuns] = useState<TeamRunSnapshot[]>([]);
   const [activeRunId, setActiveRunId] = useState<string>("");
   const [board, setBoard] = useState<TeamBoardSnapshot | null>(null);
+  const [agentHandles, setAgentHandles] = useState<string[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [senderName, setSenderName] = useState("ceo");
   const [outputType, setOutputType] = useState<OutputType>("pptx");
   const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
@@ -47,8 +52,17 @@ export default function App() {
   const [sendingRequest, setSendingRequest] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [createTaskForm, setCreateTaskForm] = useState({
+    title: "",
+    description: "",
+    ownerHandle: "writer",
+    artifactGoal: "draft",
+    priority: 50,
+    reviewRequired: false,
+  });
 
   useEffect(() => {
+    void refreshAgents();
     void refreshRuns();
   }, []);
 
@@ -83,6 +97,24 @@ export default function App() {
   const selectedTask = useMemo<TeamTask | undefined>(() => {
     return board?.tasks?.find((task) => task.id === selectedTaskId);
   }, [board, selectedTaskId]);
+
+  useEffect(() => {
+    const agents = board?.run?.selected_agents ?? [];
+    setSelectedAgents(agents);
+  }, [board?.run?.id, board?.run?.selected_agents]);
+
+  async function refreshAgents() {
+    try {
+      const data = await listAgents();
+      const handles = data.agents.map((agent) => agent.handle);
+      setAgentHandles(handles);
+      if (handles.length && !handles.includes(createTaskForm.ownerHandle)) {
+        setCreateTaskForm((prev) => ({ ...prev, ownerHandle: handles[0] }));
+      }
+    } catch {
+      // keep UI usable without blocking on agent list
+    }
+  }
 
   async function refreshRuns() {
     setLoadingRuns(true);
@@ -144,7 +176,7 @@ export default function App() {
     }
   }
 
-  async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const fileList = event.target.files;
     if (!fileList || fileList.length === 0) {
       return;
@@ -216,6 +248,47 @@ export default function App() {
     }
   }
 
+  async function handleSaveAgents() {
+    if (!activeRunId) return;
+    setPlanLoading(true);
+    try {
+      const snapshot = await updateRunAgents(activeRunId, selectedAgents);
+      setBoard(snapshot);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "에이전트 저장에 실패했습니다.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  async function handleCreateTask(e: FormEvent) {
+    e.preventDefault();
+    if (!activeRunId) return;
+    if (!createTaskForm.title.trim() || !createTaskForm.description.trim()) {
+      setError("작업 제목과 설명을 입력해 주세요.");
+      return;
+    }
+    setPlanLoading(true);
+    try {
+      const snapshot = await createTask(activeRunId, {
+        title: createTaskForm.title.trim(),
+        description: createTaskForm.description.trim(),
+        ownerHandle: createTaskForm.ownerHandle,
+        artifactGoal: createTaskForm.artifactGoal,
+        priority: createTaskForm.priority,
+        reviewRequired: createTaskForm.reviewRequired,
+      });
+      setBoard(snapshot);
+      setCreateTaskForm((prev) => ({ ...prev, title: "", description: "" }));
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "작업 생성에 실패했습니다.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
   const activityList = board?.activity ?? [];
   const messageList = board?.items ?? [];
   const taskColumns = useMemo(() => {
@@ -277,6 +350,32 @@ export default function App() {
               <div key={file.id}>{file.original_name}</div>
             ))}
           </div>
+        </div>
+
+        <div className="panel">
+          <label>에이전트 선택</label>
+          <div className="agent-picker">
+            {agentHandles.map((handle) => (
+              <label key={handle} className="agent-chip">
+                <input
+                  type="checkbox"
+                  checked={selectedAgents.includes(handle)}
+                  onChange={(e) => {
+                    setSelectedAgents((prev) => {
+                      if (e.target.checked) {
+                        return Array.from(new Set([...prev, handle]));
+                      }
+                      return prev.filter((item) => item !== handle);
+                    });
+                  }}
+                />
+                <span>{handle}</span>
+              </label>
+            ))}
+          </div>
+          <button onClick={handleSaveAgents} disabled={planLoading || !activeRunId}>
+            에이전트 적용
+          </button>
         </div>
 
         <div className="panel run-list">
@@ -441,19 +540,78 @@ export default function App() {
             )}
           </div>
 
-          <div className="plan-detail panel">
-            <h3>계획 제어</h3>
-            <p>
-              실행 계획 상태: <strong>{board?.run?.plan_status || "pending"}</strong>
-            </p>
-            <div className="plan-actions">
-              <button onClick={handlePlanApprove} disabled={planLoading || !board}>
-                승인
-              </button>
-              <button onClick={handlePlanReject} disabled={planLoading || !board}>
-                반려
-              </button>
-            </div>
+          <div className="plan-detail panel stack-panel">
+            <section>
+              <h3>계획 제어</h3>
+              <p>
+                실행 계획 상태: <strong>{board?.run?.plan_status || "pending"}</strong>
+              </p>
+              <div className="plan-actions">
+                <button onClick={handlePlanApprove} disabled={planLoading || !board}>
+                  승인
+                </button>
+                <button onClick={handlePlanReject} disabled={planLoading || !board}>
+                  반려
+                </button>
+              </div>
+            </section>
+
+            <section className="create-task-panel">
+              <h3>작업 생성</h3>
+              <form onSubmit={handleCreateTask}>
+                <label>제목</label>
+                <input
+                  value={createTaskForm.title}
+                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, title: e.target.value }))}
+                />
+                <label>설명</label>
+                <textarea
+                  value={createTaskForm.description}
+                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, description: e.target.value }))}
+                />
+                <label>담당</label>
+                <select
+                  value={createTaskForm.ownerHandle}
+                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, ownerHandle: e.target.value }))}
+                >
+                  {(selectedAgents.length ? selectedAgents : agentHandles).map((handle) => (
+                    <option key={handle} value={handle}>
+                      {handle}
+                    </option>
+                  ))}
+                </select>
+                <label>산출물 목표</label>
+                <select
+                  value={createTaskForm.artifactGoal}
+                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, artifactGoal: e.target.value }))}
+                >
+                  <option value="draft">draft</option>
+                  <option value="review_notes">review_notes</option>
+                  <option value="final">final</option>
+                  <option value="decision">decision</option>
+                  <option value="brief">brief</option>
+                </select>
+                <label>우선순위</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={createTaskForm.priority}
+                  onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, priority: Number(e.target.value) }))}
+                />
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={createTaskForm.reviewRequired}
+                    onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, reviewRequired: e.target.checked }))}
+                  />
+                  <span>리뷰 필요</span>
+                </label>
+                <button type="submit" disabled={planLoading || !activeRunId}>
+                  작업 생성
+                </button>
+              </form>
+            </section>
           </div>
         </section>
 
@@ -471,11 +629,3 @@ export default function App() {
     </div>
   );
 }
-
-type TeamRunSnapshot = {
-  id: string;
-  title: string;
-  status: string;
-  plan_status?: string;
-  selected_agents?: string[];
-};

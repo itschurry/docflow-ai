@@ -46,6 +46,7 @@ body, html, #root { margin: 0; height: 100%; font-family: "Pretendard", "Inter",
 
 .panel input,
 .panel select,
+.panel textarea,
 .panel button,
 .composer textarea,
 .composer button {
@@ -56,6 +57,11 @@ body, html, #root { margin: 0; height: 100%; font-family: "Pretendard", "Inter",
   color: #f8fafc;
   font-size: 13px;
   padding: 8px 10px;
+}
+
+.panel textarea {
+  min-height: 80px;
+  resize: vertical;
 }
 
 .panel button {
@@ -76,6 +82,24 @@ body, html, #root { margin: 0; height: 100%; font-family: "Pretendard", "Inter",
   align-items: center;
   cursor: pointer;
   color: inherit;
+}
+
+.agent-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #2f3d5c;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #0b1220;
+  font-size: 12px;
 }
 
 .run-item.active {
@@ -299,6 +323,23 @@ body, html, #root { margin: 0; height: 100%; font-family: "Pretendard", "Inter",
   border: 1px solid #1f2937;
   border-radius: 12px;
   padding: 16px;
+}
+
+.stack-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.create-task-panel form {
+  display: grid;
+  gap: 6px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .plan-actions {

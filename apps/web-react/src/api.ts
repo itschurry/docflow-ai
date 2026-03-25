@@ -106,3 +106,41 @@ export function updateTask(taskId: string, payload: Record<string, unknown>): Pr
     body: JSON.stringify(payload),
   });
 }
+
+export async function listAgents(): Promise<{ agents: { handle: string; display_name?: string }[] }> {
+  return request<{ agents: { handle: string; display_name?: string }[] }>("/web/agents");
+}
+
+export async function updateRunAgents(runId: string, selectedAgents: string[]): Promise<TeamBoardSnapshot> {
+  await request<{ ok: boolean }>(`/web/team-runs/${runId}/agents`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ selected_agents: selectedAgents }),
+  });
+  return getBoard(runId);
+}
+
+export function createTask(
+  runId: string,
+  payload: {
+    title: string;
+    description: string;
+    ownerHandle: string;
+    artifactGoal: string;
+    priority: number;
+    reviewRequired: boolean;
+  },
+): Promise<TeamBoardSnapshot> {
+  return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/tasks`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      title: payload.title,
+      description: payload.description,
+      owner_handle: payload.ownerHandle,
+      artifact_goal: payload.artifactGoal,
+      priority: payload.priority,
+      review_required: payload.reviewRequired,
+    }),
+  });
+}
