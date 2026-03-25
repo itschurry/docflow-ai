@@ -24,18 +24,21 @@ app = FastAPI(title=settings.app_name,
 app.include_router(router)
 
 project_root = Path(__file__).resolve().parents[3]
-react_root = project_root / "apps" / "web-react"
+react_root = project_root / "apps" / "web"
 react_dist = react_root / "dist"
 react_assets = react_dist / "assets"
 react_index = react_dist / "index.html"
 legacy_workspace = react_root / "assets" / "legacy-workspace.html"
 
 if react_assets.exists():
-    app.mount("/assets", StaticFiles(directory=str(react_assets)), name="react-assets")
+    app.mount("/assets", StaticFiles(directory=str(react_assets)),
+              name="react-assets")
+
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return JSONResponse(status_code=204, content=None)
+
 
 @app.get("/", include_in_schema=False)
 def root():
