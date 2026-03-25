@@ -17,9 +17,9 @@ import {
 import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot } from "./types";
 
 const AUTO_REVIEW_PRESETS = [
-  { label: "보수적 (1회)", value: 1 },
-  { label: "균형 (2회)", value: 2 },
-  { label: "집중 (4회)", value: 4 },
+  { label: "보수적 (2회)", value: 2 },
+  { label: "균형 (4회)", value: 4 },
+  { label: "집중 (6회)", value: 6 },
 ] as const;
 
 const TASK_STATUS_COLUMNS = [
@@ -38,16 +38,33 @@ function statusLabel(status?: string) {
   return status.replace(/_/g, " ");
 }
 
+const AGENT_MAP: Record<string, { label: string; icon: string }> = {
+  planner: { label: "기획자", icon: "📋" },
+  writer: { label: "작성자", icon: "✍️" },
+  critic: { label: "비평가", icon: "🧐" },
+  qa: { label: "품질 검증", icon: "🛡️" },
+  manager: { label: "매니저", icon: "👨‍💼" },
+};
+
+function agentLabel(handle?: string) {
+  if (!handle) return "미할당";
+  return AGENT_MAP[handle]?.label || handle;
+}
+
+function agentIcon(handle?: string) {
+  if (!handle) return "🤖";
+  return AGENT_MAP[handle]?.icon || "🤖";
+}
+
 export default function App() {
   const [runs, setRuns] = useState<TeamRunSnapshot[]>([]);
   const [activeRunId, setActiveRunId] = useState<string>("");
   const [board, setBoard] = useState<TeamBoardSnapshot | null>(null);
   const [agentHandles, setAgentHandles] = useState<string[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
-  const [senderName, setSenderName] = useState("ceo");
   const [outputType, setOutputType] = useState<OutputType>("pptx");
   const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
-  const [presetRounds, setPresetRounds] = useState<number>(2);
+  const [presetRounds, setPresetRounds] = useState<number>(4);
   const [files, setFiles] = useState<FileUploadItem[]>([]);
   const [composerText, setComposerText] = useState("");
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -56,6 +73,7 @@ export default function App() {
   const [planLoading, setPlanLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
 
   const [createTaskForm, setCreateTaskForm] = useState({
@@ -142,7 +160,7 @@ export default function App() {
     setLoadingRuns(true);
     try {
       const boardSnapshot = await createTeamRun({
-        requestedBy: senderName || "ceo",
+        requestedBy: "USER",
         oversightMode,
         outputType,
         autoReviewMaxRounds: presetRounds,
@@ -205,7 +223,7 @@ export default function App() {
     try {
       const boardSnapshot = await sendRequest(activeRunId, {
         text: composerText.trim(),
-        senderName: senderName || "ceo",
+        senderName: "USER",
         outputType,
         autoReviewMaxRounds: presetRounds,
         sourceFileIds: files.map((item) => item.id),
@@ -341,6 +359,11 @@ export default function App() {
 
   const activityList = board?.activity ?? [];
   const messageList = board?.items ?? [];
+  
+  // Reversing for latest first
+  const latestActivities = useMemo(() => [...activityList].reverse(), [activityList]);
+  const latestMessages = useMemo(() => [...messageList].reverse(), [messageList]);
+
   const taskColumns = useMemo(() => {
     const tasks = board?.tasks ?? [];
     return TASK_STATUS_COLUMNS.map((column) => ({
@@ -355,10 +378,21 @@ export default function App() {
     }));
   }, [board]);
 
+  const activeAgents = useMemo(() => {
+    const active = new Set<string>();
+    board?.tasks?.forEach(t => {
+      if (t.status === "in_progress" && t.owner_handle) {
+        active.add(t.owner_handle);
+      }
+    });
+    return active;
+  }, [board?.tasks]);
+
   const runStatus = board?.run?.status || "대기 중";
   const runPlanStatus = board?.run?.plan_status || "대기 중";
   const taskCount = board?.tasks?.length || 0;
   const doneCount = (board?.tasks || []).filter((task) => task.status === "done").length;
+  const currentOutputType = board?.run?.output_type || outputType;
 
   return (
     <div className="layout">
@@ -375,8 +409,6 @@ export default function App() {
         <div className="side-section">
           <div className="side-label">워크스페이스 설정</div>
           <div className="card">
-            <label>발신자</label>
-            <input className="side-input" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
             <label>개입 모드</label>
             <select className="side-input" value={oversightMode} onChange={(e) => setOversightMode(e.target.value as OversightMode)}>
               <option value="auto">자동</option>
@@ -403,11 +435,11 @@ export default function App() {
         </div>
 
         <div className="side-section">
-          <div className="side-label">참참여 에이전트</div>
+          <div className="side-label">참여 에이전트</div>
           <div className="card">
             <div className="agents">
               {agentHandles.map((handle) => (
-                <label key={handle} className="agent-chip">
+                <label key={handle} className={`agent-chip ${activeAgents.has(handle) ? 'agent-active' : ''}`}>
                   <input
                     type="checkbox"
                     checked={selectedAgents.includes(handle)}
@@ -420,7 +452,11 @@ export default function App() {
                       });
                     }}
                   />
-                  <span>{handle}</span>
+                  <span className="chip-content">
+                    {activeAgents.has(handle) && <span className="led"></span>}
+                    <span className="chip-icon">{agentIcon(handle)}</span>
+                    <span className="chip-label">{agentLabel(handle)}</span>
+                  </span>
                 </label>
               ))}
             </div>
@@ -475,12 +511,15 @@ export default function App() {
             <div className="ws-badges">
               <span className={`ws-badge status-${runStatus === 'running' || runStatus === 'active' ? 'running' : 'active'}`}>{runStatus}</span>
               <span className="ws-badge label">📋 {runPlanStatus}</span>
-              <span className="ws-badge label">📄 {board?.run?.output_type || outputType}</span>
+              <span className="ws-badge label">📄 {currentOutputType}</span>
               <span className="ws-badge label">✅ {doneCount}/{taskCount}</span>
             </div>
+            <button className="header-btn secondary" onClick={() => setIsFilesModalOpen(true)}>참고 파일 <span>({files.length})</span></button>
             <button className="header-btn primary" onClick={() => setIsPlanModalOpen(true)}>계획 및 작업 관리</button>
           </div>
         </header>
+
+        {error ? <div className="error-banner">{error}</div> : null}
 
         <div className="workspace-grid">
           <div className="workspace-main-column">
@@ -488,9 +527,9 @@ export default function App() {
               <div className="panel-header-top">
                 <h3>최종 결과물</h3>
                 <div className="export-actions">
-                  <button className="export-btn" onClick={() => handleExport("pptx")} disabled={!board?.deliverable}>PPTX</button>
-                  <button className="export-btn" onClick={() => handleExport("docx")} disabled={!board?.deliverable}>DOCX</button>
-                  <button className="export-btn" onClick={() => handleExport("xlsx")} disabled={!board?.deliverable}>XLSX</button>
+                  <button className="export-btn" onClick={() => handleExport("pptx")} disabled={!board?.deliverable || currentOutputType !== "pptx"}>PPTX</button>
+                  <button className="export-btn" onClick={() => handleExport("docx")} disabled={!board?.deliverable || currentOutputType !== "docx"}>DOCX</button>
+                  <button className="export-btn" onClick={() => handleExport("xlsx")} disabled={!board?.deliverable || currentOutputType !== "xlsx"}>XLSX</button>
                 </div>
               </div>
               <div className="deliverable-body-container">
@@ -505,7 +544,9 @@ export default function App() {
             <article className="section-panel board-panel-refined">
               <div className="panel-header-top">
                 <h3>작업 보드</h3>
-                <small className="panel-meta">{board?.run?.selected_agents?.join(", ") || "다수 에이전트"}</small>
+                <small className="panel-meta">
+                  {board?.run?.selected_agents?.map(agentLabel).join(", ") || "다수 에이전트"}
+                </small>
               </div>
               <div className="board-box">
                 <div className="board-columns">
@@ -523,7 +564,7 @@ export default function App() {
                               onClick={() => setSelectedTaskId(task.id)}
                             >
                               <div className="task-title">{task.title}</div>
-                              <div className="task-meta">{task.owner_handle || "미할당"} · {statusLabel(task.status)}</div>
+                              <div className="task-meta">{agentIcon(task.owner_handle)} {agentLabel(task.owner_handle)} · {statusLabel(task.status)}</div>
                             </div>
                           ))
                         )}
@@ -541,16 +582,16 @@ export default function App() {
                 <h3>진행 현황</h3>
               </div>
               <div className="log-list scrollable">
-                {activityList.length === 0 ? (
+                {latestActivities.length === 0 ? (
                   <p className="empty-state-main">활동 이력이 없습니다.</p>
                 ) : (
-                  activityList.map((item, index) => (
+                  latestActivities.map((item, index) => (
                     <div key={item.id} className="log-item">
                       <div className="log-line">
                         <span className="log-index">#{activityList.length - index}</span>
                         <span className="log-summary">{item.summary}</span>
                       </div>
-                      <div className="log-meta">{item.actor_handle || "시스템"} · {item.created_at}</div>
+                      <div className="log-meta">{agentIcon(item.actor_handle)} {agentLabel(item.actor_handle) || "시스템"} · {item.created_at}</div>
                     </div>
                   ))
                 )}
@@ -562,36 +603,20 @@ export default function App() {
                 <h3>대화 로그</h3>
               </div>
               <div className="log-list scrollable">
-                {messageList.length === 0 ? (
+                {latestMessages.length === 0 ? (
                   <p className="empty-state-main">대화 내용이 없습니다.</p>
                 ) : (
-                  messageList.map((message, index) => (
+                  latestMessages.map((message, index) => (
                     <div key={message.id} className="log-item">
                       <div className="log-line">
                         <span className="log-index">#{messageList.length - index}</span>
-                        <strong className="log-speaker">{message.speaker_role || "사용자"}</strong>
+                        <strong className="log-speaker">{message.speaker_role === "user" ? "👤 사용자" : `${agentIcon(message.speaker_role)} ${agentLabel(message.speaker_role)}`}</strong>
                       </div>
                       <p className="log-text">{message.visible_message || message.raw_text || "내용 없음"}</p>
                       <div className="log-meta">{message.created_at}</div>
                     </div>
                   ))
                 )}
-              </div>
-            </article>
-
-            <article className="section-panel source-files-panel">
-              <div className="panel-header-top">
-                <h3>참고 파일</h3>
-              </div>
-              <div className="source-files-box">
-                <input type="file" multiple onChange={handleUpload} className="file-input-hidden" id="file-upload" />
-                <label htmlFor="file-upload" className="file-upload-label">파일 업로드</label>
-                <div className="file-list-main scrollable">
-                  {files.map((file) => (
-                    <div key={file.id} className="file-item-main">{file.original_name}</div>
-                  ))}
-                  {files.length === 0 && <div className="task-empty-text">첨부된 파일이 없습니다.</div>}
-                </div>
               </div>
             </article>
           </div>
@@ -635,7 +660,7 @@ export default function App() {
               <div className="detail-info-grid">
                 <div className="info-item">
                   <div className="info-label">담당</div>
-                  <div className="info-value">{selectedTask.owner_handle || "없음"}</div>
+                  <div className="info-value">{agentIcon(selectedTask.owner_handle)} {agentLabel(selectedTask.owner_handle)}</div>
                 </div>
                 <div className="info-item">
                   <div className="info-label">상태</div>
@@ -662,10 +687,34 @@ export default function App() {
         </>
       )}
 
+      {/* Files Modal */}
+      {isFilesModalOpen && (
+        <div className="modal-overlay-refined" onClick={() => setIsFilesModalOpen(false)}>
+          <div className="modal-content-refined small" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-refined">
+              <h3>참고 파일 관리</h3>
+              <button className="modal-close-btn" onClick={() => setIsFilesModalOpen(false)}>✕</button>
+            </div>
+            <div className="modal-body-refined scrollable">
+              <div className="source-files-box">
+                <input type="file" multiple onChange={handleUpload} className="file-input-hidden" id="file-upload" />
+                <label htmlFor="file-upload" className="file-upload-label">새 파일 업로드</label>
+                <div className="file-list-main scrollable">
+                  {files.map((file) => (
+                    <div key={file.id} className="file-item-main">{file.original_name}</div>
+                  ))}
+                  {files.length === 0 && <div className="task-empty-text">첨부된 파일이 없습니다.</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Plan & Task Creation Modal (Full Overlay) */}
       {isPlanModalOpen && (
         <div className="modal-overlay-refined" onClick={() => setIsPlanModalOpen(false)}>
-          <div className="modal-content-refined" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content-refined large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header-refined">
               <h3>계획 및 작업 관리</h3>
               <button className="modal-close-btn" onClick={() => setIsPlanModalOpen(false)}>✕</button>
@@ -708,7 +757,7 @@ export default function App() {
                         >
                           {(selectedAgents.length ? selectedAgents : agentHandles).map((handle) => (
                             <option key={handle} value={handle}>
-                              {handle}
+                              {agentLabel(handle)}
                             </option>
                           ))}
                         </select>

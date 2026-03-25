@@ -1331,6 +1331,20 @@ def get_web_team_run(
     return serialize_team_run(run)
 
 
+@router.delete("/web/team-runs/{team_run_id}", status_code=200)
+def delete_web_team_run(
+    team_run_id: UUID,
+    db: Session = Depends(get_db),
+):
+    from app.conversation_models import TeamRunModel
+    run = db.query(TeamRunModel).filter(TeamRunModel.id == team_run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    db.delete(run)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/web/team-runs/{team_run_id}/board", status_code=200)
 def get_web_team_run_board(
     team_run_id: UUID,
