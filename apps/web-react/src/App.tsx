@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import {
   approvePlan,
   createTask,
@@ -23,37 +23,49 @@ const AUTO_REVIEW_PRESETS = [
 ] as const;
 
 const TASK_STATUS_COLUMNS = [
-  { key: "todo", label: "할 일" },
-  { key: "in_progress", label: "진행 중" },
-  { key: "review", label: "검토 대기" },
-  { key: "done", label: "완료" },
+  { key: "todo",        label: "할 일",    colorClass: "col-todo" },
+  { key: "in_progress", label: "진행 중",  colorClass: "col-in-progress" },
+  { key: "review",      label: "검토 대기", colorClass: "col-review" },
+  { key: "done",        label: "완료",     colorClass: "col-done" },
 ];
 
-function statusLabel(status?: string) {
-  if (!status) return "알 수 없음";
-  if (status === "in_progress") return "진행 중";
-  if (status === "done") return "완료";
-  if (status === "todo") return "할 일";
-  if (status === "review") return "검토 대기";
-  return status.replace(/_/g, " ");
-}
-
-const AGENT_MAP: Record<string, { label: string; icon: string }> = {
-  planner: { label: "기획자", icon: "📋" },
-  writer: { label: "작성자", icon: "✍️" },
-  critic: { label: "비평가", icon: "🧐" },
-  qa: { label: "품질 검증", icon: "🛡️" },
-  manager: { label: "매니저", icon: "👨‍💼" },
+const AGENT_MAP: Record<string, { label: string; icon: string; initials: string }> = {
+  planner: { label: "기획자",   icon: "📋", initials: "P" },
+  writer:  { label: "작성자",   icon: "✍️", initials: "W" },
+  critic:  { label: "비평가",   icon: "🧐", initials: "C" },
+  qa:      { label: "품질 검증", icon: "🛡️", initials: "Q" },
+  manager: { label: "매니저",   icon: "��‍💼", initials: "M" },
 };
 
-function agentLabel(handle?: string) {
-  if (!handle) return "미할당";
-  return AGENT_MAP[handle]?.label || handle;
+function statusLabel(status?: string) {
+  if (!status) return "대기";
+  const map: Record<string, string> = {
+    in_progress: "진행 중", done: "완료", todo: "할 일",
+    review: "검토 중", idle: "유휴", running: "실행 중",
+    pending: "대기", approved: "승인됨", rejected: "반려됨",
+    error: "오류",
+  };
+  return map[status] ?? status.replace(/_/g, " ");
 }
 
-function agentIcon(handle?: string) {
+function agentLabel(handle?: string | null) {
+  if (!handle) return "시스템";
+  return AGENT_MAP[handle]?.label || handle;
+}
+function agentIcon(handle?: string | null) {
   if (!handle) return "🤖";
   return AGENT_MAP[handle]?.icon || "🤖";
+}
+function agentInitials(handle?: string | null) {
+  if (!handle) return "SY";
+  return AGENT_MAP[handle]?.initials || handle.slice(0, 2).toUpperCase();
+}
+
+/** Returns the CSS class name for an agent handle */
+function agentClass(handle?: string | null): string {
+  if (!handle) return "system";
+  const known = ["planner", "writer", "critic", "qa", "manager"];
+  return known.includes(handle) ? handle : "system";
 }
 
 export default function App() {
@@ -75,15 +87,21 @@ export default function App() {
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
-
-  const [createTaskForm, setCreateTaskForm] = useState({
-    title: "",
-    description: "",
-    ownerHandle: "writer",
-    artifactGoal: "draft",
-    priority: 50,
-    reviewRequired: false,
+  const [createTaskForm, setCreateTaskForm] = useState({ title: "", description: "" });
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return localStorage.getItem("theme") === "dark" ||
+      (!localStorage.getItem("theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
   });
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+  }, [isDarkMode]);
 
   useEffect(() => {
     void refreshAgents();
@@ -91,36 +109,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeRunId) {
-      setBoard(null);
-      return;
-    }
+    if (!activeRunId) { setBoard(null); return; }
     let cancelled = false;
     const fetchBoard = async () => {
       try {
         const data = await getBoard(activeRunId);
-        if (!cancelled) {
-          setBoard(data);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "워크스페이스를 불러오지 못했습니다.");
-        }
+        if (!cancelled) setBoard(data);
+      } catch {
+        if (!cancelled) setError("워크스페이스 동기화 실패");
       }
     };
     void fetchBoard();
-    const interval = window.setInterval(() => {
-      void fetchBoard();
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    const interval = window.setInterval(() => { void fetchBoard(); }, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [activeRunId]);
 
-  const selectedTask = useMemo<TeamTask | undefined>(() => {
-    return board?.tasks?.find((task) => task.id === selectedTaskId);
-  }, [board, selectedTaskId]);
+  const selectedTask = useMemo<TeamTask | undefined>(
+    () => board?.tasks?.find((task) => task.id === selectedTaskId),
+    [board, selectedTaskId],
+  );
 
   useEffect(() => {
     const agents = board?.run?.selected_agents ?? [];
@@ -130,14 +137,8 @@ export default function App() {
   async function refreshAgents() {
     try {
       const data = await listAgents();
-      const handles = data.agents.map((agent) => agent.handle);
-      setAgentHandles(handles);
-      if (handles.length && !handles.includes(createTaskForm.ownerHandle)) {
-        setCreateTaskForm((prev) => ({ ...prev, ownerHandle: handles[0] }));
-      }
-    } catch {
-      // keep UI usable without blocking on agent list
-    }
+      setAgentHandles(data.agents.map((a) => a.handle));
+    } catch { /* silent */ }
   }
 
   async function refreshRuns() {
@@ -145,12 +146,9 @@ export default function App() {
     try {
       const items = await listTeamRuns();
       setRuns(items);
-      const next = activeRunId || items[0]?.id || "";
-      if (next) {
-        setActiveRunId(next);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "워크스페이스를 불러오지 못했습니다.");
+      if (!activeRunId && items[0]) setActiveRunId(items[0].id);
+    } catch {
+      setError("목록 갱신 실패");
     } finally {
       setLoadingRuns(false);
     }
@@ -159,18 +157,12 @@ export default function App() {
   async function handleCreateRun() {
     setLoadingRuns(true);
     try {
-      const boardSnapshot = await createTeamRun({
-        requestedBy: "USER",
-        oversightMode,
-        outputType,
-        autoReviewMaxRounds: presetRounds,
-      });
-      setBoard(boardSnapshot);
-      setActiveRunId(boardSnapshot.run.id);
-      setError("");
+      const snapshot = await createTeamRun({ requestedBy: "USER", oversightMode, outputType, autoReviewMaxRounds: presetRounds });
+      setBoard(snapshot);
+      setActiveRunId(snapshot.run.id);
       void refreshRuns();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "워크스페이스 생성에 실패했습니다.");
+    } catch {
+      setError("워크스페이스 생성 실패");
     } finally {
       setLoadingRuns(false);
     }
@@ -178,81 +170,55 @@ export default function App() {
 
   async function handleDeleteSelected() {
     if (!selectedRunIds.length) return;
-    if (!window.confirm(`선택한 ${selectedRunIds.length}개의 워크스페이스를 삭제하시겠습니까?`)) return;
-    setLoadingRuns(true);
+    if (!window.confirm("선택한 항목을 삭제하시겠습니까?")) return;
     try {
-      for (const id of selectedRunIds) {
-        await deleteTeamRun(id);
-      }
+      for (const id of selectedRunIds) await deleteTeamRun(id);
       setSelectedRunIds([]);
-      if (selectedRunIds.includes(activeRunId)) {
-        setActiveRunId("");
-      }
+      if (selectedRunIds.includes(activeRunId)) setActiveRunId("");
       void refreshRuns();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "워크스페이스 삭제에 실패했습니다.");
-    } finally {
-      setLoadingRuns(false);
+    } catch {
+      setError("삭제 작업 중 오류 발생");
     }
   }
 
-  async function handleDeleteAll() {
-    if (!runs.length) return;
-    if (!window.confirm("모든 워크스페이스를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) return;
-    setLoadingRuns(true);
-    try {
-      for (const run of runs) {
-        await deleteTeamRun(run.id);
-      }
-      setSelectedRunIds([]);
-      setActiveRunId("");
-      void refreshRuns();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "모든 워크스페이스 삭제에 실패했습니다.");
-    } finally {
-      setLoadingRuns(false);
-    }
-  }
-
-  async function handleSendRequest(e: FormEvent) {
-    e.preventDefault();
-    if (!activeRunId || !composerText.trim() || sendingRequest) {
-      return;
-    }
+  async function handleSendRequest(e?: FormEvent) {
+    if (e) e.preventDefault();
+    if (!activeRunId || !composerText.trim() || sendingRequest) return;
     setSendingRequest(true);
     try {
-      const boardSnapshot = await sendRequest(activeRunId, {
-        text: composerText.trim(),
-        senderName: "USER",
-        outputType,
-        autoReviewMaxRounds: presetRounds,
+      const snapshot = await sendRequest(activeRunId, {
+        text: composerText.trim(), senderName: "USER",
+        outputType, autoReviewMaxRounds: presetRounds,
         sourceFileIds: files.map((item) => item.id),
       });
-      setBoard(boardSnapshot);
+      setBoard(snapshot);
       setComposerText("");
       setFiles([]);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "요청 전송에 실패했습니다.");
+    } catch {
+      setError("메시지 전송 실패");
     } finally {
       setSendingRequest(false);
     }
   }
 
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return;
+      e.preventDefault();
+      void handleSendRequest();
+    }
+  };
+
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const fileList = event.target.files;
-    if (!fileList || fileList.length === 0) {
-      return;
-    }
+    if (!fileList?.length) return;
     try {
-      const uploaded: FileUploadItem[] = [];
       for (const file of Array.from(fileList)) {
         const item = await uploadFile(file);
-        uploaded.push(item);
+        setFiles((prev) => [...prev, item]);
       }
-      setFiles((prev) => [...uploaded, ...prev]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "파일 업로드에 실패했습니다.");
+    } catch {
+      setError("파일 업로드 실패");
     } finally {
       event.target.value = "";
     }
@@ -263,40 +229,8 @@ export default function App() {
     try {
       const { download_path } = await exportDeliverable(activeRunId, format);
       window.location.href = download_path;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "결과물 다운로드에 실패했습니다.");
-    }
-  }
-
-  async function handlePlanApprove() {
-    if (!activeRunId) return;
-    setPlanLoading(true);
-    try {
-      const snapshot = await approvePlan(activeRunId);
-      setBoard(snapshot);
-      setError("");
-      setIsPlanModalOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "계획 승인에 실패했습니다.");
-    } finally {
-      setPlanLoading(false);
-    }
-  }
-
-  async function handlePlanReject() {
-    if (!activeRunId) return;
-    const reason = window.prompt("반려 사유를 입력하세요.") || "";
-    if (!reason.trim()) return;
-    setPlanLoading(true);
-    try {
-      const snapshot = await rejectPlan(activeRunId, reason);
-      setBoard(snapshot);
-      setError("");
-      setIsPlanModalOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "계획 반려에 실패했습니다.");
-    } finally {
-      setPlanLoading(false);
+    } catch {
+      setError("파일 내보내기 실패");
     }
   }
 
@@ -306,12 +240,11 @@ export default function App() {
     try {
       const snapshot = await updateTask(selectedTaskId, { action });
       setBoard(snapshot);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "작업 처리를 실패했습니다.");
+      setSelectedTaskId(null);
+    } catch {
+      setError("작업 업데이트 실패");
     } finally {
       setPlanLoading(false);
-      setSelectedTaskId(null);
     }
   }
 
@@ -321,9 +254,34 @@ export default function App() {
     try {
       const snapshot = await updateRunAgents(activeRunId, selectedAgents);
       setBoard(snapshot);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "에이전트 저장에 실패했습니다.");
+    } catch {
+      setError("에이전트 설정 저장 실패");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  async function handlePlanApprove() {
+    if (!activeRunId) return;
+    setPlanLoading(true);
+    try {
+      const snapshot = await approvePlan(activeRunId);
+      setBoard(snapshot);
+    } catch {
+      setError("계획 승인 실패");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  async function handlePlanReject() {
+    if (!activeRunId) return;
+    setPlanLoading(true);
+    try {
+      const snapshot = await rejectPlan(activeRunId);
+      setBoard(snapshot);
+    } catch {
+      setError("계획 반려 실패");
     } finally {
       setPlanLoading(false);
     }
@@ -331,38 +289,28 @@ export default function App() {
 
   async function handleCreateTask(e: FormEvent) {
     e.preventDefault();
-    if (!activeRunId) return;
-    if (!createTaskForm.title.trim() || !createTaskForm.description.trim()) {
-      setError("작업 제목과 설명을 입력해 주세요.");
-      return;
-    }
+    if (!activeRunId || !createTaskForm.title.trim()) return;
     setPlanLoading(true);
     try {
       const snapshot = await createTask(activeRunId, {
         title: createTaskForm.title.trim(),
         description: createTaskForm.description.trim(),
-        ownerHandle: createTaskForm.ownerHandle,
-        artifactGoal: createTaskForm.artifactGoal,
-        priority: createTaskForm.priority,
-        reviewRequired: createTaskForm.reviewRequired,
+        ownerHandle: "planner",
+        artifactGoal: "",
+        priority: 5,
+        reviewRequired: false,
       });
       setBoard(snapshot);
-      setCreateTaskForm((prev) => ({ ...prev, title: "", description: "" }));
-      setError("");
-      setIsPlanModalOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "작업 생성에 실패했습니다.");
+      setCreateTaskForm({ title: "", description: "" });
+    } catch {
+      setError("작업 생성 실패");
     } finally {
       setPlanLoading(false);
     }
   }
 
-  const activityList = board?.activity ?? [];
-  const messageList = board?.items ?? [];
-  
-  // Reversing for latest first
-  const latestActivities = useMemo(() => [...activityList].reverse(), [activityList]);
-  const latestMessages = useMemo(() => [...messageList].reverse(), [messageList]);
+  const latestActivities = useMemo(() => [...(board?.activity ?? [])].reverse(), [board?.activity]);
+  const latestMessages   = useMemo(() => [...(board?.items   ?? [])].reverse(), [board?.items]);
 
   const taskColumns = useMemo(() => {
     const tasks = board?.tasks ?? [];
@@ -372,430 +320,461 @@ export default function App() {
         if (!task.status) return column.key === "todo";
         if (task.status === column.key) return true;
         if (column.key === "review" && task.review_state === "reviewed") return true;
-        if (column.key === "done" && task.status === "done") return true;
         return false;
       }),
     }));
-  }, [board]);
+  }, [board?.tasks]);
 
   const activeAgents = useMemo(() => {
     const active = new Set<string>();
-    board?.tasks?.forEach(t => {
-      if (t.status === "in_progress" && t.owner_handle) {
-        active.add(t.owner_handle);
-      }
-    });
+    board?.tasks?.forEach((t) => { if (t.status === "in_progress" && t.owner_handle) active.add(t.owner_handle); });
     return active;
   }, [board?.tasks]);
 
-  const runStatus = board?.run?.status || "대기 중";
-  const runPlanStatus = board?.run?.plan_status || "대기 중";
-  const taskCount = board?.tasks?.length || 0;
-  const doneCount = (board?.tasks || []).filter((task) => task.status === "done").length;
+  const runStatus        = board?.run?.status      || "idle";
+  const runPlanStatus    = board?.run?.plan_status  || "pending";
   const currentOutputType = board?.run?.output_type || outputType;
 
+  // ── Render ─────────────────────────────────────────────────────
   return (
-    <div className="layout">
-      <aside className="side">
-        <div className="brand">
-          <div className="dot">D</div>
-          <div className="brand-copy">
-            <b>DocFlow AI</b>
-            <br />
-            <span>에이전트 워크스페이스</span>
+    <div className="app-container">
+      {/* ── Sidebar ── */}
+      <aside className="app-sidebar">
+        <header className="sidebar-brand">
+          <div className="brand-icon">D</div>
+          <div className="brand-text">
+            <h1>DocFlow AI</h1>
+            <span>Workspace Console</span>
           </div>
-        </div>
+          <button className="theme-switcher" onClick={() => setIsDarkMode(!isDarkMode)} title="테마 전환">
+            {isDarkMode ? "☀️" : "🌙"}
+          </button>
+        </header>
 
-        <div className="side-section">
-          <div className="side-label">워크스페이스 설정</div>
-          <div className="card">
-            <label>개입 모드</label>
-            <select className="side-input" value={oversightMode} onChange={(e) => setOversightMode(e.target.value as OversightMode)}>
-              <option value="auto">자동</option>
-              <option value="manual">수동</option>
-            </select>
-            <label>산출물 형식</label>
-            <select className="side-input" value={outputType} onChange={(e) => setOutputType(e.target.value as OutputType)}>
-              <option value="pptx">PPTX 슬라이드</option>
-              <option value="docx">DOCX 문서</option>
-              <option value="xlsx">XLSX 표</option>
-            </select>
-            <label>자동 검토 횟수</label>
-            <select className="side-input" value={presetRounds} onChange={(e) => setPresetRounds(Number(e.target.value))}>
-              {AUTO_REVIEW_PRESETS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <button className="side-btn primary" onClick={handleCreateRun} disabled={loadingRuns}>
-              새 워크스페이스
-            </button>
+        <nav className="sidebar-nav">
+          {/* Config */}
+          <div className="nav-group">
+            <h2 className="nav-label">워크스페이스 설정</h2>
+            <div className="config-card">
+              <div className="config-field">
+                <label>개입 모드</label>
+                <select value={oversightMode} onChange={(e) => setOversightMode(e.target.value as OversightMode)}>
+                  <option value="auto">자동 (Auto)</option>
+                  <option value="manual">수동 (Manual)</option>
+                </select>
+              </div>
+              <div className="config-field">
+                <label>산출물 형식</label>
+                <select value={outputType} onChange={(e) => setOutputType(e.target.value as OutputType)}>
+                  <option value="pptx">PPTX 슬라이드</option>
+                  <option value="docx">DOCX 문서</option>
+                  <option value="xlsx">XLSX 데이터</option>
+                </select>
+              </div>
+              <div className="config-field">
+                <label>검토 강도</label>
+                <select value={presetRounds} onChange={(e) => setPresetRounds(Number(e.target.value))}>
+                  {AUTO_REVIEW_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+              <button className="action-button primary" onClick={handleCreateRun} disabled={loadingRuns}>
+                {loadingRuns ? "생성 중…" : "+ 새 워크스페이스"}
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="side-section">
-          <div className="side-label">참여 에이전트</div>
-          <div className="card">
-            <div className="agents">
+          {/* Agents */}
+          <div className="nav-group">
+            <h2 className="nav-label">참여 에이전트</h2>
+            <div className="agent-selection-list">
               {agentHandles.map((handle) => (
-                <label key={handle} className={`agent-chip ${activeAgents.has(handle) ? 'agent-active' : ''}`}>
+                <label key={handle} className={`agent-checkbox-item ${activeAgents.has(handle) ? "agent-active" : ""}`}>
                   <input
                     type="checkbox"
                     checked={selectedAgents.includes(handle)}
                     onChange={(e) => {
-                      setSelectedAgents((prev) => {
-                        if (e.target.checked) {
-                          return Array.from(new Set([...prev, handle]));
-                        }
-                        return prev.filter((item) => item !== handle);
-                      });
+                      const next = e.target.checked
+                        ? [...selectedAgents, handle]
+                        : selectedAgents.filter((a) => a !== handle);
+                      setSelectedAgents(Array.from(new Set(next)));
                     }}
                   />
-                  <span className="chip-content">
-                    {activeAgents.has(handle) && <span className="led"></span>}
-                    <span className="chip-icon">{agentIcon(handle)}</span>
-                    <span className="chip-label">{agentLabel(handle)}</span>
-                  </span>
+                  <div className="agent-checkbox-content">
+                    <span className={`agent-dot ${handle}`} />
+                    <span className="agent-name">{agentLabel(handle)}</span>
+                    {activeAgents.has(handle) && <div className="status-indicator" />}
+                  </div>
                 </label>
               ))}
+              <button className="action-button ghost" onClick={handleSaveAgents} disabled={planLoading || !activeRunId}>
+                설정 적용
+              </button>
             </div>
-            <button className="side-btn" onClick={handleSaveAgents} disabled={planLoading || !activeRunId}>
-              에이전트 적용
-            </button>
           </div>
-        </div>
 
-        <div className="side-section run-list-section">
-          <div className="side-label">워크스페이스 목록</div>
-          <div className="run-list-actions">
-            <button className="text-btn danger" onClick={handleDeleteSelected} disabled={!selectedRunIds.length}>선택 삭제</button>
-            <button className="text-btn danger" onClick={handleDeleteAll} disabled={!runs.length}>전체 삭제</button>
-          </div>
-          <div className="run-list scrollable">
-            {runs.map((run) => (
-              <div
-                key={run.id}
-                className={`run-item ${run.id === activeRunId ? "active" : ""}`}
-                onClick={() => setActiveRunId(run.id)}
-              >
-                <input
-                  type="checkbox"
-                  className="run-checkbox"
-                  checked={selectedRunIds.includes(run.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    setSelectedRunIds(prev =>
-                      e.target.checked ? [...prev, run.id] : prev.filter(id => id !== run.id)
-                    );
-                  }}
-                />
-                <div className="run-info">
-                  <div className="run-title-text">{run.title || "제목 없음"}</div>
-                  <small className="run-status-text">{statusLabel(run.status)}</small>
+          {/* Workspace list */}
+          <div className="nav-group flex-fill">
+            <h2 className="nav-label flex-header">
+              워크스페이스 목록
+              <button className="delete-trigger" onClick={handleDeleteSelected} disabled={!selectedRunIds.length}>삭제</button>
+            </h2>
+            <div className="run-entry-list scrollable">
+              {runs.length === 0 && <span style={{ fontSize: 11, color: "var(--sb-muted)", padding: "8px 6px" }}>워크스페이스가 없습니다</span>}
+              {runs.map((run) => (
+                <div
+                  key={run.id}
+                  className={`run-entry-card ${run.id === activeRunId ? "active" : ""}`}
+                  onClick={() => setActiveRunId(run.id)}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedRunIds.includes(run.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selectedRunIds, run.id]
+                        : selectedRunIds.filter((id) => id !== run.id);
+                      setSelectedRunIds(next);
+                    }}
+                  />
+                  <div className="run-entry-info">
+                    <strong className="run-title">{run.title || "무제 작업"}</strong>
+                    <span className="run-status">{statusLabel(run.status)}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
-            {runs.length === 0 ? <p className="empty-state-side">워크스페이스가 없습니다.</p> : null}
+              ))}
+            </div>
           </div>
-        </div>
+        </nav>
       </aside>
 
-      <main className="main">
-        <header className="top">
-          <div className="header-left">
-            <h1 className="title">{board?.run?.title || "워크스페이스"}</h1>
-            <p className="subtitle">AI 팀 실행 상태를 실시간으로 확인하고 문서 결과물을 관리합니다.</p>
+      {/* ── Main ── */}
+      <main className="app-main">
+        <header className="workspace-header">
+          <div className="header-meta">
+            <h2 className="workspace-title">{board?.run?.title || "워크스페이스를 선택하세요"}</h2>
+            <p className="workspace-desc">{board?.run?.request_text || "실시간 에이전트 실행 상태를 모니터링합니다."}</p>
           </div>
-          <div className="header-right">
-            <div className="ws-badges">
-              <span className={`ws-badge status-${runStatus === 'running' || runStatus === 'active' ? 'running' : 'active'}`}>{runStatus}</span>
-              <span className="ws-badge label">📋 {runPlanStatus}</span>
-              <span className="ws-badge label">📄 {currentOutputType}</span>
-              <span className="ws-badge label">✅ {doneCount}/{taskCount}</span>
+          <div className="header-controls">
+            <div className="status-pill-group">
+              <span className={`status-pill ${runStatus}`}>
+                {runStatus === "running" && <span className="pill-dot" />}
+                {runStatus.toUpperCase()}
+              </span>
+              <span className={`status-pill ${runPlanStatus}`}>
+                📋 {statusLabel(runPlanStatus)}
+              </span>
+              <span className="status-pill info">
+                📄 {currentOutputType.toUpperCase()}
+              </span>
             </div>
-            <button className="header-btn secondary" onClick={() => setIsFilesModalOpen(true)}>참고 파일 <span>({files.length})</span></button>
-            <button className="header-btn primary" onClick={() => setIsPlanModalOpen(true)}>계획 및 작업 관리</button>
+            <div className="button-row">
+              <button className="control-button" onClick={() => setIsFilesModalOpen(true)}>
+                📎 파일 {files.length > 0 && `(${files.length})`}
+              </button>
+              <button className="control-button primary" onClick={() => setIsPlanModalOpen(true)}>
+                계획 관리
+              </button>
+            </div>
           </div>
         </header>
 
-        {error ? <div className="error-banner">{error}</div> : null}
-
-        <div className="workspace-grid">
-          <div className="workspace-main-column">
-            <article className="section-panel deliverable-panel">
-              <div className="panel-header-top">
-                <h3>최종 결과물</h3>
-                <div className="export-actions">
-                  <button className="export-btn" onClick={() => handleExport("pptx")} disabled={!board?.deliverable || currentOutputType !== "pptx"}>PPTX</button>
-                  <button className="export-btn" onClick={() => handleExport("docx")} disabled={!board?.deliverable || currentOutputType !== "docx"}>DOCX</button>
-                  <button className="export-btn" onClick={() => handleExport("xlsx")} disabled={!board?.deliverable || currentOutputType !== "xlsx"}>XLSX</button>
-                </div>
-              </div>
-              <div className="deliverable-body-container">
-                {board?.deliverable?.content ? (
-                  <pre className="deliverable-pre">{board.deliverable.content}</pre>
-                ) : (
-                  <div className="empty-state-main">아직 결과물이 없습니다.</div>
-                )}
-              </div>
-            </article>
-
-            <article className="section-panel board-panel-refined">
-              <div className="panel-header-top">
-                <h3>작업 보드</h3>
-                <small className="panel-meta">
-                  {board?.run?.selected_agents?.map(agentLabel).join(", ") || "다수 에이전트"}
-                </small>
-              </div>
-              <div className="board-box">
-                <div className="board-columns">
-                  {taskColumns.map((column) => (
-                    <div key={column.key} className="board-col">
-                      <h4>{column.label}</h4>
-                      <div className="board-cards scrollable">
-                        {column.tasks.length === 0 ? (
-                          <div className="task-empty-text">비어 있음</div>
-                        ) : (
-                          column.tasks.map((task) => (
-                            <div
-                              key={task.id}
-                              className={`task-card ${task.id === selectedTaskId ? "active" : ""}`}
-                              onClick={() => setSelectedTaskId(task.id)}
-                            >
-                              <div className="task-title">{task.title}</div>
-                              <div className="task-meta">{agentIcon(task.owner_handle)} {agentLabel(task.owner_handle)} · {statusLabel(task.status)}</div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <div className="workspace-side-column">
-            <article className="section-panel log-panel">
-              <div className="panel-header-top">
-                <h3>진행 현황</h3>
-              </div>
-              <div className="log-list scrollable">
-                {latestActivities.length === 0 ? (
-                  <p className="empty-state-main">활동 이력이 없습니다.</p>
-                ) : (
-                  latestActivities.map((item, index) => (
-                    <div key={item.id} className="log-item">
-                      <div className="log-line">
-                        <span className="log-index">#{activityList.length - index}</span>
-                        <span className="log-summary">{item.summary}</span>
-                      </div>
-                      <div className="log-meta">{agentIcon(item.actor_handle)} {agentLabel(item.actor_handle) || "시스템"} · {item.created_at}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </article>
-
-            <article className="section-panel log-panel">
-              <div className="panel-header-top">
-                <h3>대화 로그</h3>
-              </div>
-              <div className="log-list scrollable">
-                {latestMessages.length === 0 ? (
-                  <p className="empty-state-main">대화 내용이 없습니다.</p>
-                ) : (
-                  latestMessages.map((message, index) => (
-                    <div key={message.id} className="log-item">
-                      <div className="log-line">
-                        <span className="log-index">#{messageList.length - index}</span>
-                        <strong className="log-speaker">{message.speaker_role === "user" ? "👤 사용자" : `${agentIcon(message.speaker_role)} ${agentLabel(message.speaker_role)}`}</strong>
-                      </div>
-                      <p className="log-text">{message.visible_message || message.raw_text || "내용 없음"}</p>
-                      <div className="log-meta">{message.created_at}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </article>
-          </div>
-        </div>
-
-        <footer className="footer">
-          <form className="composer-refined" onSubmit={handleSendRequest}>
-            <textarea
-              className="composer-input"
-              value={composerText}
-              onChange={(e) => setComposerText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void handleSendRequest(e as unknown as FormEvent);
-                }
-              }}
-              placeholder="AI 팀에게 요청하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"
-            />
-            <button className="composer-btn" type="submit" disabled={!composerText.trim() || sendingRequest}>
-              {sendingRequest ? "전송 중…" : "전송"}
+        {error && (
+          <div className="alert-banner" style={{ margin: "12px 32px 0" }}>
+            ⚠️ {error}
+            <button
+              onClick={() => setError("")}
+              style={{ marginLeft: 12, background: "none", border: "none", cursor: "pointer", fontWeight: 700, color: "inherit" }}
+            >
+              ✕
             </button>
-          </form>
+          </div>
+        )}
+
+        {/* Content */}
+        {!board ? (
+          <div className="welcome-screen">
+            <div className="welcome-icon">🤖</div>
+            <h3>DocFlow AI에 오신 것을 환영합니다</h3>
+            <p>왼쪽 설정에서 새 워크스페이스를 만들거나 기존 워크스페이스를 선택하세요.</p>
+          </div>
+        ) : (
+          <div className="workspace-content">
+            <div className="content-layout-grid">
+              {/* Left column */}
+              <div className="main-viewport">
+                {/* Output panel */}
+                <section className="dashboard-panel output-panel">
+                  <header className="panel-top">
+                    <h3>최종 결과물</h3>
+                    <div className="export-tools">
+                      <button onClick={() => handleExport("pptx")} disabled={!board.deliverable || currentOutputType !== "pptx"}>PPTX</button>
+                      <button onClick={() => handleExport("docx")} disabled={!board.deliverable || currentOutputType !== "docx"}>DOCX</button>
+                      <button onClick={() => handleExport("xlsx")} disabled={!board.deliverable || currentOutputType !== "xlsx"}>XLSX</button>
+                    </div>
+                  </header>
+                  <div className="panel-body deliverable-view">
+                    {board.deliverable?.content
+                      ? <pre>{board.deliverable.content}</pre>
+                      : (
+                        <div className="empty-state">
+                          <div className="empty-state-icon">📄</div>
+                          <p>아직 생성된 결과물이 없습니다.<br />AI 팀에게 작업을 요청해보세요.</p>
+                        </div>
+                      )
+                    }
+                  </div>
+                </section>
+
+                {/* Kanban */}
+                <section className="dashboard-panel board-panel">
+                  <header className="panel-top">
+                    <h3>작업 보드</h3>
+                    <div className="agent-avatars">
+                      {board.run?.selected_agents?.map((h) => (
+                        <span key={h} className="agent-avatar-chip">{agentIcon(h)} {agentLabel(h)}</span>
+                      ))}
+                    </div>
+                  </header>
+                  <div className="kanban-board">
+                    {taskColumns.map((col) => (
+                      <div key={col.key} className="kanban-column">
+                        <header className={`column-header ${col.colorClass}`}>
+                          {col.label}
+                          <span className="col-count">{col.tasks.length}</span>
+                        </header>
+                        <div className="column-cards">
+                          {col.tasks.map((t) => (
+                            <div
+                              key={t.id}
+                              className={`task-card-item agent-${agentClass(t.owner_handle)} ${t.id === selectedTaskId ? "active" : ""}`}
+                              onClick={() => setSelectedTaskId(t.id)}
+                            >
+                              <h4 className="task-name">{t.title}</h4>
+                              <div className="task-footer">
+                                <span className={`agent-badge ${agentClass(t.owner_handle)}`}>
+                                  {agentInitials(t.owner_handle)}
+                                </span>
+                                <span className="agent-tag">{agentLabel(t.owner_handle)}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {!col.tasks.length && <div className="column-empty">비어 있음</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              {/* Right column */}
+              <aside className="side-viewport">
+                {/* Activity timeline */}
+                <section className="dashboard-panel logs-panel">
+                  <header className="panel-top">
+                    <h3>진행 현황</h3>
+                    <span style={{ fontSize: 11, color: "var(--text-4)" }}>{latestActivities.length}건</span>
+                  </header>
+                  <div className="timeline-list">
+                    {latestActivities.length === 0
+                      ? <div className="empty-notice">진행 기록이 없습니다</div>
+                      : latestActivities.map((a) => (
+                        <div key={a.id} className="timeline-item">
+                          <div className={`timeline-avatar ${agentClass(a.actor_handle)}`}>
+                            {agentInitials(a.actor_handle)}
+                          </div>
+                          <div className="timeline-body">
+                            <p className="item-summary">{a.summary}</p>
+                            <footer className="item-footer">{agentLabel(a.actor_handle)} · {a.created_at}</footer>
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                </section>
+
+                {/* Chat log */}
+                <section className="dashboard-panel chat-panel">
+                  <header className="panel-top">
+                    <h3>대화 로그</h3>
+                    <span style={{ fontSize: 11, color: "var(--text-4)" }}>{latestMessages.length}건</span>
+                  </header>
+                  <div className="chat-log-list">
+                    {latestMessages.length === 0
+                      ? <div className="empty-notice">대화 내용이 없습니다</div>
+                      : latestMessages.map((m) => {
+                        const isUser = m.speaker_role === "user";
+                        const cls = isUser ? "user" : agentClass(m.speaker_role);
+                        return (
+                          <div key={m.id} className="chat-bubble-item">
+                            <div className={`bubble-avatar ${cls}`}>
+                              {isUser ? "U" : agentInitials(m.speaker_role)}
+                            </div>
+                            <div className="bubble-body">
+                              <div className="bubble-header">
+                                <strong className="bubble-speaker">
+                                  {isUser ? "사용자" : agentLabel(m.speaker_role)}
+                                </strong>
+                                {m.created_at && <span className="bubble-time">{m.created_at}</span>}
+                              </div>
+                              <p className="bubble-text">{m.visible_message || m.raw_text}</p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    }
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </div>
+        )}
+
+        {/* Footer composer */}
+        <footer className="workspace-footer">
+          <div className="composer-wrap">
+            {files.length > 0 && (
+              <div className="file-pills">
+                {files.map((f) => (
+                  <span key={f.id} className="file-pill">📄 {f.original_name}</span>
+                ))}
+              </div>
+            )}
+            <div className="message-composer">
+              <textarea
+                value={composerText}
+                onChange={(e) => setComposerText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="AI 팀에게 요청사항을 입력하세요… (Enter 전송 / Shift+Enter 줄바꿈)"
+                rows={1}
+              />
+              <button
+                className="send-button"
+                onClick={() => void handleSendRequest()}
+                disabled={sendingRequest || !composerText.trim() || !activeRunId}
+              >
+                {sendingRequest ? "전송 중…" : "전송"}
+              </button>
+            </div>
+          </div>
         </footer>
       </main>
 
-      {/* Task Detail Backdrop & Slide-over */}
+      {/* ── Task Detail Slide-over ── */}
       {selectedTaskId && selectedTask && (
-        <>
-          <div className="task-detail-backdrop" onClick={() => setSelectedTaskId(null)} />
-          <div className={`task-detail-box ${selectedTaskId ? "open" : ""}`}>
-            <div className="detail-header">
+        <div className="slide-panel-container">
+          <div className="panel-overlay" onClick={() => setSelectedTaskId(null)} />
+          <div className="slide-panel-content">
+            <header className="slide-panel-header">
               <h2>{selectedTask.title}</h2>
-              <button className="detail-close-btn" onClick={() => setSelectedTaskId(null)}>✕</button>
-            </div>
-            <div className="detail-content scrollable">
-              <div className="detail-section">
-                <div className="detail-label">설명</div>
-                <p className="detail-text">{selectedTask.description}</p>
+              <button className="panel-close" onClick={() => setSelectedTaskId(null)}>✕</button>
+            </header>
+            <div className="slide-panel-body scrollable">
+              {selectedTask.description && (
+                <div className="detail-block">
+                  <label>작업 설명</label>
+                  <p>{selectedTask.description}</p>
+                </div>
+              )}
+              <div className="detail-data-grid">
+                <div className="grid-cell">
+                  <label>담당자</label>
+                  <span>
+                    <span className={`agent-badge ${agentClass(selectedTask.owner_handle)}`} style={{ marginRight: 6 }}>
+                      {agentInitials(selectedTask.owner_handle)}
+                    </span>
+                    {agentLabel(selectedTask.owner_handle)}
+                  </span>
+                </div>
+                <div className="grid-cell"><label>상태</label><span>{statusLabel(selectedTask.status)}</span></div>
+                <div className="grid-cell"><label>우선순위</label><span>{selectedTask.priority ?? "-"}</span></div>
+                <div className="grid-cell"><label>리뷰 상태</label><span>{selectedTask.review_state || "-"}</span></div>
               </div>
-              <div className="detail-info-grid">
-                <div className="info-item">
-                  <div className="info-label">담당</div>
-                  <div className="info-value">{agentIcon(selectedTask.owner_handle)} {agentLabel(selectedTask.owner_handle)}</div>
-                </div>
-                <div className="info-item">
-                  <div className="info-label">상태</div>
-                  <div className="info-value">{statusLabel(selectedTask.status)}</div>
-                </div>
-                <div className="info-item">
-                  <div className="info-label">우선순위</div>
-                  <div className="info-value">{selectedTask.priority ?? "-"}</div>
-                </div>
-                <div className="info-item">
-                  <div className="info-label">리뷰 상태</div>
-                  <div className="info-value">{selectedTask.review_state || "-"}</div>
-                </div>
-              </div>
-              <div className="detail-actions">
-                <button className="action-btn" onClick={() => handleTaskAction("rerun")}>재실행</button>
-                <button className="action-btn" onClick={() => handleTaskAction("block")}>진행 보류</button>
-                <button className="action-btn" onClick={() => handleTaskAction("unblock")}>보류 해제</button>
-                <button className="action-btn success" onClick={() => handleTaskAction("approve_review")}>리뷰 승인</button>
-                <button className="action-btn danger" onClick={() => handleTaskAction("reject_review")}>리뷰 반려</button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Files Modal */}
-      {isFilesModalOpen && (
-        <div className="modal-overlay-refined" onClick={() => setIsFilesModalOpen(false)}>
-          <div className="modal-content-refined small" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-refined">
-              <h3>참고 파일 관리</h3>
-              <button className="modal-close-btn" onClick={() => setIsFilesModalOpen(false)}>✕</button>
-            </div>
-            <div className="modal-body-refined scrollable">
-              <div className="source-files-box">
-                <input type="file" multiple onChange={handleUpload} className="file-input-hidden" id="file-upload" />
-                <label htmlFor="file-upload" className="file-upload-label">새 파일 업로드</label>
-                <div className="file-list-main scrollable">
-                  {files.map((file) => (
-                    <div key={file.id} className="file-item-main">{file.original_name}</div>
-                  ))}
-                  {files.length === 0 && <div className="task-empty-text">첨부된 파일이 없습니다.</div>}
-                </div>
+              <div className="detail-actions-row">
+                <button onClick={() => void handleTaskAction("rerun")}>재실행</button>
+                <button onClick={() => void handleTaskAction("block")}>보류</button>
+                <button onClick={() => void handleTaskAction("unblock")}>해제</button>
+                <button className="success" onClick={() => void handleTaskAction("approve_review")}>리뷰 승인</button>
+                <button className="danger"  onClick={() => void handleTaskAction("reject_review")}>리뷰 반려</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Plan & Task Creation Modal (Full Overlay) */}
-      {isPlanModalOpen && (
-        <div className="modal-overlay-refined" onClick={() => setIsPlanModalOpen(false)}>
-          <div className="modal-content-refined large" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header-refined">
-              <h3>계획 및 작업 관리</h3>
-              <button className="modal-close-btn" onClick={() => setIsPlanModalOpen(false)}>✕</button>
+      {/* ── Files Modal ── */}
+      {isFilesModalOpen && (
+        <div className="global-modal-dim" onClick={() => setIsFilesModalOpen(false)}>
+          <div className="global-modal-box sm" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-top">
+              <h3>참고 파일 관리</h3>
+              <button className="modal-close" onClick={() => setIsFilesModalOpen(false)}>✕</button>
+            </header>
+            <div className="modal-inner">
+              <label className="upload-zone">
+                <input type="file" multiple onChange={handleUpload} />
+                ＋ 파일 추가하기
+              </label>
+              <div className="file-list-group">
+                {files.length === 0
+                  ? <p className="modal-empty">첨부된 파일이 없습니다.</p>
+                  : files.map((f) => (
+                    <div key={f.id} className="file-pill-modal">📄 {f.original_name}</div>
+                  ))
+                }
+              </div>
             </div>
-            <div className="modal-body-refined scrollable">
-              <div className="modal-grid-refined">
-                <section className="modal-section panel-light">
-                  <h3>계획 제어</h3>
-                  <div className="plan-status-box">
-                    상태: <strong className="status-highlight">{runPlanStatus}</strong>
-                  </div>
-                  <div className="plan-btn-group">
-                    <button className="modal-btn success" onClick={handlePlanApprove} disabled={planLoading || !board}>승인</button>
-                    <button className="modal-btn danger" onClick={handlePlanReject} disabled={planLoading || !board}>반려</button>
-                  </div>
-                </section>
+          </div>
+        </div>
+      )}
 
-                <section className="modal-section panel-light">
-                  <h3>작업 생성</h3>
-                  <form className="create-task-form" onSubmit={handleCreateTask}>
+      {/* ── Plan Modal ── */}
+      {isPlanModalOpen && (
+        <div className="global-modal-dim" onClick={() => setIsPlanModalOpen(false)}>
+          <div className="global-modal-box lg" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-top">
+              <h3>실행 계획 및 작업 제어</h3>
+              <button className="modal-close" onClick={() => setIsPlanModalOpen(false)}>✕</button>
+            </header>
+            <div className="modal-inner plan-view">
+              <section className="control-section">
+                <h4>워크플로우 제어</h4>
+                <div className="status-display">
+                  현재 상태: <strong>{statusLabel(runPlanStatus)}</strong>
+                </div>
+                <div className="horizontal-actions">
+                  <button className="action-btn success" onClick={() => void handlePlanApprove()} disabled={planLoading || !activeRunId}>
+                    ✓ 승인
+                  </button>
+                  <button className="action-btn danger"  onClick={() => void handlePlanReject()}  disabled={planLoading || !activeRunId}>
+                    ✕ 반려
+                  </button>
+                </div>
+              </section>
+              <section className="form-section">
+                <h4>수동 작업 추가</h4>
+                <form className="form-stack" onSubmit={(e) => void handleCreateTask(e)}>
+                  <div className="form-item">
                     <label>제목</label>
                     <input
-                      className="modal-input"
+                      placeholder="작업 제목 입력…"
                       value={createTaskForm.title}
-                      onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, title: e.target.value }))}
+                      onChange={(e) => setCreateTaskForm({ ...createTaskForm, title: e.target.value })}
                     />
+                  </div>
+                  <div className="form-item">
                     <label>설명</label>
                     <textarea
-                      className="modal-input"
+                      placeholder="작업 설명 입력…"
                       value={createTaskForm.description}
-                      onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, description: e.target.value }))}
+                      onChange={(e) => setCreateTaskForm({ ...createTaskForm, description: e.target.value })}
                     />
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>담당</label>
-                        <select
-                          className="modal-input"
-                          value={createTaskForm.ownerHandle}
-                          onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, ownerHandle: e.target.value }))}
-                        >
-                          {(selectedAgents.length ? selectedAgents : agentHandles).map((handle) => (
-                            <option key={handle} value={handle}>
-                              {agentLabel(handle)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="form-group">
-                        <label>우선순위</label>
-                        <input
-                          className="modal-input"
-                          type="number"
-                          value={createTaskForm.priority}
-                          onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, priority: Number(e.target.value) }))}
-                        />
-                      </div>
-                    </div>
-                    <label>산출물 목표</label>
-                    <select
-                      className="modal-input"
-                      value={createTaskForm.artifactGoal}
-                      onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, artifactGoal: e.target.value }))}
-                    >
-                      <option value="draft">초안 (draft)</option>
-                      <option value="review_notes">리뷰 노트 (review_notes)</option>
-                      <option value="final">최종본 (final)</option>
-                    </select>
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={createTaskForm.reviewRequired}
-                        onChange={(e) => setCreateTaskForm((prev) => ({ ...prev, reviewRequired: e.target.checked }))}
-                      />
-                      <span>리뷰 필요</span>
-                    </label>
-                    <button type="submit" disabled={planLoading || !activeRunId} className="modal-btn primary">
-                      작업 생성
-                    </button>
-                  </form>
-                </section>
-              </div>
+                  </div>
+                  <button type="submit" className="action-btn primary full" disabled={planLoading || !createTaskForm.title.trim()}>
+                    작업 생성
+                  </button>
+                </form>
+              </section>
             </div>
           </div>
         </div>
