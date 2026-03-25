@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   approvePlan,
   createTask,
@@ -66,6 +66,146 @@ function agentClass(handle?: string | null): string {
   if (!handle) return "system";
   const known = ["planner", "writer", "critic", "qa", "manager"];
   return known.includes(handle) ? handle : "system";
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
+  let lastIndex = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={`inline-code-${key++}`}>{token.slice(1, -1)}</code>);
+    } else if (token.startsWith("**")) {
+      nodes.push(<strong key={`inline-strong-${key++}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("[")) {
+      const labelMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+      if (labelMatch) {
+        nodes.push(
+          <a key={`inline-link-${key++}`} href={labelMatch[2]} target="_blank" rel="noreferrer">
+            {labelMatch[1]}
+          </a>,
+        );
+      } else {
+        nodes.push(token);
+      }
+    } else {
+      nodes.push(token);
+    }
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+  return nodes;
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      blocks.push(
+        <pre key={`code-${i}`} className="md-code-block">
+          <code>{codeLines.join("\n")}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const headingText = headingMatch[2];
+      const Tag = `h${Math.min(level, 6)}` as keyof JSX.IntrinsicElements;
+      blocks.push(<Tag key={`heading-${i}`}>{renderInlineMarkdown(headingText)}</Tag>);
+      i += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
+        i += 1;
+      }
+      blocks.push(<blockquote key={`quote-${i}`}>{renderInlineMarkdown(quoteLines.join(" "))}</blockquote>);
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*+]\s+/, ""));
+        i += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${i}`}>
+          {items.map((item, idx) => (
+            <li key={`ul-${i}-${idx}`}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ""));
+        i += 1;
+      }
+      blocks.push(
+        <ol key={`ol-${i}`}>
+          {items.map((item, idx) => (
+            <li key={`ol-${i}-${idx}`}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !lines[i].trim().startsWith("```") &&
+      !/^#{1,6}\s+/.test(lines[i].trim()) &&
+      !/^>\s?/.test(lines[i].trim()) &&
+      !/^[-*+]\s+/.test(lines[i].trim()) &&
+      !/^\d+\.\s+/.test(lines[i].trim())
+    ) {
+      paragraphLines.push(lines[i].trim());
+      i += 1;
+    }
+    blocks.push(<p key={`p-${i}`}>{renderInlineMarkdown(paragraphLines.join(" "))}</p>);
+  }
+
+  return <div className="markdown-preview">{blocks}</div>;
 }
 
 export default function App() {
@@ -515,7 +655,7 @@ export default function App() {
                   </header>
                   <div className="panel-body deliverable-view">
                     {board.deliverable?.content
-                      ? <pre>{board.deliverable.content}</pre>
+                      ? <MarkdownPreview content={board.deliverable.content} />
                       : (
                         <div className="empty-state">
                           <div className="empty-state-icon">📄</div>

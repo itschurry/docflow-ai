@@ -166,6 +166,22 @@ def _infer_output_type_from_request_text(request_text: str | None) -> str:
     return "docx"
 
 
+def _summarize_workspace_title(request_text: str | None, *, max_len: int = 64) -> str:
+    normalized = " ".join(str(request_text or "").replace("\u00A0", " ").split()).strip()
+    if not normalized:
+        return "Web Team Run"
+    normalized = re.sub(r"^[#>*\-\d\.\)\s]+", "", normalized).strip()
+    if not normalized:
+        return "Web Team Run"
+    if len(normalized) <= max_len:
+        return normalized
+    shortened = normalized[: max_len + 1]
+    if " " in shortened:
+        shortened = shortened.rsplit(" ", 1)[0]
+    shortened = shortened.rstrip(".,;:!?")
+    return f"{shortened}…"
+
+
 def _normalize_auto_review_max_rounds(value: object | None) -> int:
     if value is None:
         return AUTO_REVIEW_MAX_ROUNDS
@@ -1693,6 +1709,12 @@ async def send_web_team_run_request(
     if not conv:
         raise HTTPException(status_code=404, detail="Linked conversation not found")
     _ensure_team_run_sessions(team_svc, run)
+
+    current_title = str(run.title or "").strip()
+    if not current_title or current_title.lower() in {"web team run", "web team chat"}:
+        summarized_title = _summarize_workspace_title(text)
+        run.title = summarized_title
+        conv.title = summarized_title
 
     selected = _normalize_web_selected_agents(
         selected=list(run.selected_agents or conv.selected_agents or []),
