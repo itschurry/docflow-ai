@@ -41,7 +41,7 @@ const AGENT_MAP: Record<string, { label: string; icon: string; initials: string 
   writer:  { label: "작성자",   icon: "✍️", initials: "W" },
   critic:  { label: "비평가",   icon: "🧐", initials: "C" },
   qa:      { label: "품질 검증", icon: "🛡️", initials: "Q" },
-  manager: { label: "매니저",   icon: "��‍💼", initials: "M" },
+  manager: { label: "매니저",   icon: "👔", initials: "M" },
 };
 
 function statusLabel(status?: string) {
