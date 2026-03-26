@@ -526,119 +526,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Knowledge Library */}
-          <div className="nav-group">
-            <h2 className="nav-label">
-              지식 라이브러리
-              <div className="nav-label-actions">
-                <label className="icon-btn upload-icon-btn" title="파일 업로드">
-                  <input type="file" multiple style={{ display: "none" }} onChange={handleUpload} />
-                  ＋
-                </label>
-                <button
-                  className="icon-btn"
-                  onClick={() => { setIsKnowledgeOpen(!isKnowledgeOpen); if (!isKnowledgeOpen) void refreshKnowledge(); }}
-                  title={isKnowledgeOpen ? "접기" : "펼치기"}
-                >
-                  {knowledgeLoading ? "⟳" : isKnowledgeOpen ? "▲" : "▼"}
-                </button>
-              </div>
-            </h2>
-            {isKnowledgeOpen && (
-              <div className="knowledge-list">
-                {knowledgeFiles.length === 0 ? (
-                  <div className="knowledge-empty-state">
-                    <p className="empty-notice">업로드된 파일 없음</p>
-                    <label className="knowledge-upload-cta">
-                      <input type="file" multiple style={{ display: "none" }} onChange={handleUpload} />
-                      📎 파일 업로드
-                    </label>
-                  </div>
-                ) : (
-                  knowledgeFiles.map((kf) => (
-                    <div key={kf.id} className={`knowledge-card ${selectedKnowledgeIds.includes(kf.id) ? "selected" : ""}`}>
-                      <div className="knowledge-card-header" onClick={() => {
-                        const next = selectedKnowledgeIds.includes(kf.id)
-                          ? selectedKnowledgeIds.filter((id) => id !== kf.id)
-                          : [...selectedKnowledgeIds, kf.id];
-                        setSelectedKnowledgeIds(next);
-                      }}>
-                        <span className={`index-badge ${kf.index_status}`}>
-                          {kf.index_status === "indexed" ? "✓" : kf.index_status === "failed" ? "✗" : "○"}
-                        </span>
-                        <span className="knowledge-name">{kf.original_name}</span>
-                        <span className="chunk-count">{kf.chunk_count}청크</span>
-                        <button
-                          className="icon-btn sm"
-                          onClick={(e) => { e.stopPropagation(); void handleToggleChunks(kf.id); }}
-                          title="근거 문단 보기"
-                        >
-                          {expandedFileId === kf.id ? "▲" : "▼"}
-                        </button>
-                        <button
-                          className="icon-btn sm danger"
-                          onClick={(e) => { e.stopPropagation(); void handleDeleteKnowledgeFile(kf.id); }}
-                          title="삭제"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {expandedFileId === kf.id && (
-                        <div className="chunk-preview-list">
-                          {(fileChunks[kf.id] ?? []).map((chunk) => (
-                            <div key={chunk.id} className="chunk-preview-item">
-                              <span className="chunk-section">{chunk.section || `청크 ${chunk.chunk_index + 1}`}</span>
-                              <p className="chunk-text">{chunk.content}</p>
-                            </div>
-                          ))}
-                          {(fileChunks[kf.id] ?? []).length === 0 && (
-                            <p className="empty-notice">청크 없음</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RAG & Style Config */}
-          <div className="nav-group">
-            <h2 className="nav-label">참고·문체 설정</h2>
-            <div className="config-card">
-              <div className="config-field">
-                <label>참고 모드</label>
-                <select value={referenceMode} onChange={(e) => setReferenceMode(e.target.value as ReferenceMode)}>
-                  <option value="auto">자동 추천</option>
-                  <option value="all">전체 라이브러리</option>
-                  <option value="selected">선택한 자료만</option>
-                </select>
-              </div>
-              <div className="config-field">
-                <label>문체 모드</label>
-                <select value={styleMode} onChange={(e) => setStyleMode(e.target.value as StyleMode)}>
-                  <option value="default">기본</option>
-                  <option value="formal">격식체</option>
-                  <option value="concise">간결체</option>
-                  <option value="friendly">친근체</option>
-                </select>
-              </div>
-              {styleMode !== "default" && (
-                <div className="config-field">
-                  <label>문체 강도</label>
-                  <select value={styleStrength} onChange={(e) => setStyleStrength(e.target.value as StyleStrength)}>
-                    <option value="low">약하게</option>
-                    <option value="medium">보통</option>
-                    <option value="high">강하게</option>
-                  </select>
-                </div>
-              )}
-              {referenceMode === "selected" && selectedKnowledgeIds.length > 0 && (
-                <p className="config-hint">{selectedKnowledgeIds.length}개 파일 선택됨</p>
-              )}
-            </div>
-          </div>
 
           {/* Workspace list */}
           <div className="nav-group flex-fill">
@@ -681,7 +568,7 @@ export default function App() {
         <header className="workspace-header">
           <div className="header-meta">
             <h2 className="workspace-title">{board?.run?.title || "워크스페이스를 선택하세요"}</h2>
-            <p className="workspace-desc">{board?.run?.request_text || "실시간 에이전트 실행 상태를 모니터링합니다."}</p>
+
           </div>
           <div className="header-controls">
             <div className="status-pill-group">
@@ -773,59 +660,7 @@ export default function App() {
                     }
                   </div>
 
-                  {/* RAG Sources Panel - always visible */}
-                  <div className="rag-sources-panel">
-                    <header className="sources-header">
-                      <span className="sources-title">📎 참고 자료</span>
-                      <div className="sources-header-right">
-                        {board?.run?.rag_config?.reference_mode && (
-                          <span className="rag-mode-badge">
-                            {board.run.rag_config.reference_mode === "auto" ? "자동" :
-                             board.run.rag_config.reference_mode === "all" ? "전체" : "선택"}
-                          </span>
-                        )}
-                        <button
-                          className="icon-btn sm"
-                          onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
-                          title="지식 라이브러리 열기"
-                        >
-                          📚
-                        </button>
-                      </div>
-                    </header>
-                    {board?.source_files && board.source_files.length > 0 ? (
-                      <div className="sources-list">
-                        {board.source_files.map((sf) => (
-                          <div key={sf.id} className="source-chip">
-                            <span className={`index-badge sm ${sf.index_status ?? "not_indexed"}`}>
-                              {sf.index_status === "indexed" ? "✓" : sf.index_status === "failed" ? "✗" : "○"}
-                            </span>
-                            <span className="source-name">{sf.original_name}</span>
-                            {sf.chunk_count !== undefined && sf.chunk_count > 0 && (
-                              <span className="source-chunks">{sf.chunk_count}</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="sources-empty">
-                        <span>이 요청에 사용된 참고 자료가 없습니다.</span>
-                        <button
-                          className="sources-empty-btn"
-                          onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
-                        >
-                          라이브러리 관리 →
-                        </button>
-                      </div>
-                    )}
-                    {board?.run?.rag_config?.style_mode && board.run.rag_config.style_mode !== "default" && (
-                      <div className="style-badge-row">
-                        <span className="style-badge">
-                          문체: {board.run.rag_config.style_mode} · {board.run.rag_config.style_strength ?? "medium"}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+
                 </section>
 
                 {/* Kanban */}
@@ -978,13 +813,7 @@ export default function App() {
                   </span>
                 )}
               </div>
-              <button
-                className="mode-settings-btn"
-                onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
-                title="지식 라이브러리 및 참고 설정"
-              >
-                ⚙️ 라이브러리 설정
-              </button>
+
             </div>
             {files.length > 0 && (
               <div className="file-pills">

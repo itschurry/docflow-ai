@@ -94,7 +94,6 @@ export default function JobTimeline({ jobId, onClose }: Props) {
         )}
       </div>
 
-      <div className="job-timeline-request">{job.request_text}</div>
 
       {/* Progress bar */}
       <div className="job-progress-wrap">
