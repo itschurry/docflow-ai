@@ -9,7 +9,7 @@ import sys
 
 # Use routes_orig_test.py as the source (described as routes_backup.py in task)
 BACKUP = "app/api/routes_orig_test.py"
-OUT = "app/api/routes"
+OUT = "app/routes"
 
 with open(BACKUP) as f:
     src = f.read()
@@ -85,19 +85,19 @@ print("Generating routes/ package from", BACKUP)
 init_content = '''\
 from fastapi import APIRouter
 
-from app.api.routes.health import router as health_router
-from app.api.routes.projects import router as projects_router
-from app.api.routes.files import router as files_router
-from app.api.routes.jobs import router as jobs_router
-from app.api.routes.web_knowledge import router as web_knowledge_router
-from app.api.routes.ops import router as ops_router
-from app.api.routes.telegram import router as telegram_router
-from app.api.routes.conversations import router as conversations_router
-from app.api.routes.web_runs import router as web_runs_router
-from app.api.routes.web_chats import router as web_chats_router
+from app.routes.health import router as health_router
+from app.routes.projects import router as projects_router
+from app.routes.files import router as files_router
+from app.routes.jobs import router as jobs_router
+from app.routes.web_knowledge import router as web_knowledge_router
+from app.routes.ops import router as ops_router
+from app.routes.telegram import router as telegram_router
+from app.routes.conversations import router as conversations_router
+from app.routes.web_runs import router as web_runs_router
+from app.routes.web_chats import router as web_chats_router
 
 # Re-export internal helpers used by tests
-from app.api.routes.web_runs import (
+from app.routes.web_runs import (
     _build_structured_deliverable,
     _build_done_with_risks_content,
     _normalize_presentation_final_content,
@@ -107,7 +107,7 @@ from app.api.routes.web_runs import (
 )
 
 # Re-export patching targets so monkeypatch on `routes.<name>` works
-from app.api.routes.web_runs import (
+from app.routes.web_runs import (
     anthropic_skills_available,
     openai_document_generation_available,
     AnthropicSkillsDocumentGenerator,
@@ -603,18 +603,18 @@ from ._shared import (
 
 
 # ---------------------------------------------------------------------------
-# Proxy callables so that monkeypatch on `app.api.routes.<name>` is forwarded
+# Proxy callables so that monkeypatch on `app.routes.<name>` is forwarded
 # to the live lookup used inside route handlers (testability shim).
 # ---------------------------------------------------------------------------
 class _RouteProxy:
-    \"\"\"Callable proxy that delegates through app.api.routes at call time.\"\"\"
+    \"\"\"Callable proxy that delegates through app.routes at call time.\"\"\"
 
     def __init__(self, attr_name: str, default_impl):
         self._attr_name = attr_name
         self._default_impl = default_impl
 
     def __call__(self, *args, **kwargs):
-        pkg = _sys.modules.get("app.api.routes")
+        pkg = _sys.modules.get("app.routes")
         if pkg is not None:
             fn = pkg.__dict__.get(self._attr_name)
             if fn is not None and fn is not self:

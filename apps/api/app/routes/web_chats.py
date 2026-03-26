@@ -17,11 +17,11 @@ from app.conversations.serializer import (
 )
 from app.orchestrator.engine import orchestrator
 from app.team_runtime.service import TeamRunService
-from ._shared import (
+from app.routes._shared import (
     _normalize_web_selected_agents,
     WEB_UPLOAD_PROJECT_NAME,
 )
-from .web_runs import _build_progress_steps, _extract_web_deliverable
+from app.routes.web_runs import _build_progress_steps, _extract_web_deliverable
 
 router = APIRouter()
 

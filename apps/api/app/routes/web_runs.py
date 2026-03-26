@@ -51,7 +51,7 @@ from app.services.openai_document_generator import (
     OpenAIDocumentIRGenerator as _OpenAIDocumentIRGenerator_impl,
     openai_document_generation_available as _openai_document_generation_available_impl,
 )
-from ._shared import (
+from app.routes._shared import (
     _file_analysis_payload,
     _normalize_web_selected_agents,
     TEAM_EXPORT_PROJECT_NAME,
@@ -68,18 +68,18 @@ from ._shared import (
 
 
 # ---------------------------------------------------------------------------
-# Proxy callables so that monkeypatch on `app.api.routes.<name>` is forwarded
+# Proxy callables so that monkeypatch on `app.routes.<name>` is forwarded
 # to the live lookup used inside route handlers (testability shim).
 # ---------------------------------------------------------------------------
 class _RouteProxy:
-    """Callable proxy that delegates through app.api.routes at call time."""
+    """Callable proxy that delegates through app.routes at call time."""
 
     def __init__(self, attr_name: str, default_impl):
         self._attr_name = attr_name
         self._default_impl = default_impl
 
     def __call__(self, *args, **kwargs):
-        pkg = _sys.modules.get("app.api.routes")
+        pkg = _sys.modules.get("app.routes")
         if pkg is not None:
             fn = pkg.__dict__.get(self._attr_name)
             if fn is not None and fn is not self:

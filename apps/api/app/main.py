@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import router
+from app.routes import router
 from app.core.config import settings
 from app.core.database import Base, engine
 from app import models  # noqa: F401

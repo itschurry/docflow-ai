@@ -1,18 +1,18 @@
 from fastapi import APIRouter
 
-from app.api.routes.health import router as health_router
-from app.api.routes.projects import router as projects_router
-from app.api.routes.files import router as files_router
-from app.api.routes.jobs import router as jobs_router
-from app.api.routes.web_knowledge import router as web_knowledge_router
-from app.api.routes.ops import router as ops_router
-from app.api.routes.telegram import router as telegram_router
-from app.api.routes.conversations import router as conversations_router
-from app.api.routes.web_runs import router as web_runs_router
-from app.api.routes.web_chats import router as web_chats_router
+from app.routes.health import router as health_router
+from app.routes.projects import router as projects_router
+from app.routes.files import router as files_router
+from app.routes.jobs import router as jobs_router
+from app.routes.web_knowledge import router as web_knowledge_router
+from app.routes.ops import router as ops_router
+from app.routes.telegram import router as telegram_router
+from app.routes.conversations import router as conversations_router
+from app.routes.web_runs import router as web_runs_router
+from app.routes.web_chats import router as web_chats_router
 
 # Re-export internal helpers used by tests
-from app.api.routes.web_runs import (
+from app.routes.web_runs import (
     _build_structured_deliverable,
     _build_done_with_risks_content,
     _normalize_presentation_final_content,
@@ -22,7 +22,7 @@ from app.api.routes.web_runs import (
 )
 
 # Re-export patching targets so monkeypatch on `routes.<name>` works
-from app.api.routes.web_runs import (
+from app.routes.web_runs import (
     anthropic_skills_available,
     openai_document_generation_available,
     AnthropicSkillsDocumentGenerator,

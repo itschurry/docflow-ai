@@ -98,6 +98,22 @@ cd apps/api
 ./scripts/postgres_full_check.sh
 ```
 
+## 🗂️ Backend Structure & Import Convention
+
+API routes live at `apps/api/app/routes/` (previously `app/api/routes/`).
+All Python imports use `app.*` absolute paths:
+
+```python
+# ✅ correct
+from app.routes import router
+from app.routes.web_runs import _review_mode_policy
+from app.routes._shared import require_auth
+
+# ❌ avoid
+from .web_runs import ...         # relative import
+from app.api.routes import ...    # old path (deleted)
+```
+
 ## 🛡️ Security & Quality
 
 - **Reviewer Engine**: Automatic quality scoring based on configurable rules (length, keywords, TODO checks).

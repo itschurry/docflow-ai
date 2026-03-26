@@ -18,12 +18,12 @@ from app.agents.base import AgentResult
 from app.agents.base import BaseAgent
 from app.agents.base import AgentConfig
 from app.agents.base import _parse_agent_payload
-from app.api.routes import _build_structured_deliverable
-from app.api.routes import _build_done_with_risks_content
-from app.api.routes import _normalize_presentation_final_content
-from app.api.routes import _presentation_user_visible_markdown
-from app.api.routes import _task_execution_contract
-from app.api.routes import _coerce_team_tasks
+from app.routes import _build_structured_deliverable
+from app.routes import _build_done_with_risks_content
+from app.routes import _normalize_presentation_final_content
+from app.routes import _presentation_user_visible_markdown
+from app.routes import _task_execution_contract
+from app.routes import _coerce_team_tasks
 from app.services.file_generators import generate_report_docx
 
 
@@ -1293,7 +1293,7 @@ def test_export_falls_back_to_openai_ir_when_claude_unavailable(client, monkeypa
     )
     assert planned.status_code == 202
 
-    import app.api.routes as routes
+    import app.routes as routes
 
     class _DummyOpenAIGen:
         def generate_ir(self, **kwargs):
@@ -1345,7 +1345,7 @@ def test_export_uses_openai_fallback_even_when_claude_fallback_flag_disabled(cli
     )
     assert planned.status_code == 202
 
-    import app.api.routes as routes
+    import app.routes as routes
 
     class _FailClaude:
         def generate(self, **kwargs):

@@ -12,7 +12,7 @@ from app.models import FileModel, ProjectModel
 from app.schemas.request_response import UploadFileResponse
 from app.services.document_ir import extract_text_from_ir, parse_document_to_ir, summarize_document_ir
 from app.services.indexing_service import index_file
-from ._shared import _ensure_web_upload_project, _file_analysis_payload
+from app.routes._shared import _ensure_web_upload_project, _file_analysis_payload
 
 router = APIRouter()
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models import DocumentChunkModel, FileModel
-from ._shared import _ensure_web_upload_project
+from app.routes._shared import _ensure_web_upload_project
 
 router = APIRouter()
 
