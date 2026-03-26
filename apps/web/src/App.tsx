@@ -110,6 +110,7 @@ export default function App() {
   const [sendingRequest, setSendingRequest] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
@@ -370,13 +371,15 @@ export default function App() {
 
   async function handleTaskAction(action: string) {
     if (!selectedTaskId) return;
+    setTaskActionError(null);
     setPlanLoading(true);
     try {
       const snapshot = await updateTask(selectedTaskId, { action });
       setBoard(snapshot);
       setSelectedTaskId(null);
-    } catch {
-      setError("작업 업데이트 실패");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "작업 업데이트 실패";
+      setTaskActionError(msg);
     } finally {
       setPlanLoading(false);
     }
@@ -863,13 +866,16 @@ export default function App() {
       {/* ── Task Detail Slide-over ── */}
       {selectedTaskId && selectedTask && (
         <div className="slide-panel-container">
-          <div className="panel-overlay" onClick={() => setSelectedTaskId(null)} />
+          <div className="panel-overlay" onClick={() => { setSelectedTaskId(null); setTaskActionError(null); }} />
           <div className="slide-panel-content">
             <header className="slide-panel-header">
               <h2>{selectedTask.title}</h2>
-              <button className="panel-close" onClick={() => setSelectedTaskId(null)}>✕</button>
+              <button className="panel-close" onClick={() => { setSelectedTaskId(null); setTaskActionError(null); }}>✕</button>
             </header>
             <div className="slide-panel-body scrollable">
+              {taskActionError && (
+                <div className="task-action-error">⚠️ {taskActionError}</div>
+              )}
               {selectedTask.description && (
                 <div className="detail-block">
                   <label>작업 설명</label>

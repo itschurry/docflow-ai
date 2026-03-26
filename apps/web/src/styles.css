@@ -770,6 +770,12 @@ input, button, textarea, select {
 }
 .panel-close:hover { background: var(--surface-2); color: var(--text); }
 
+.task-action-error {
+  padding: 10px 14px; border-radius: var(--r-sm);
+  background: var(--danger-soft, #fee2e2); color: var(--danger, #dc2626);
+  font-size: 13px; font-weight: 600; border: 1px solid var(--danger, #dc2626);
+}
+
 .slide-panel-body { padding: 28px; display: flex; flex-direction: column; gap: 24px; flex: 1; }
 
 .detail-block { display: flex; flex-direction: column; gap: 6px; }

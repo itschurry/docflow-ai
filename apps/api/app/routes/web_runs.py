@@ -3848,6 +3848,23 @@ def _escalate_auto_review_to_manual(
         conv.status = "active"
         conv.updated_at = now_utc()
 
+    # Create a review_notes artifact so manual approve_review passes the
+    # _task_has_review_notes() gate in the PATCH /tasks handler.
+    if run.conversation_id:
+        review_note_content = (
+            f"[수동 검토 필요 — 자동 검토 한도 도달]\n\n"
+            f"핵심 사유: {summary}\n\n"
+            f"남은 리스크: {risk_summary}"
+        )
+        conv_svc.create_or_replace_artifact(
+            conversation_id=run.conversation_id,
+            artifact_type="review_notes",
+            content=review_note_content,
+            created_by_handle="manager",
+            task_id=review_task.id,
+            replace_latest=False,
+        )
+
 
 async def _maybe_auto_review_task(
     db: Session,
