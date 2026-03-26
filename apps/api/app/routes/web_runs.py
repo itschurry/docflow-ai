@@ -1326,7 +1326,10 @@ async def update_web_team_task(
         return _build_team_board_snapshot(db, refreshed_run)
 
     if action in {"approve_review", "reject_review"}:
-        if not _task_has_review_notes(db, run, updated.id):
+        # When the run was explicitly escalated to manual review, bypass the
+        # review_notes gate — the escalation itself is sufficient justification.
+        # In all other cases, require review_notes to exist.
+        if run.status != "awaiting_review" and not _task_has_review_notes(db, run, updated.id):
             raise HTTPException(status_code=400, detail="Task does not have review notes")
 
         if action == "approve_review":
@@ -4252,12 +4255,15 @@ def _task_has_review_notes(
 ) -> bool:
     if not run.conversation_id:
         return False
-    conv_svc = ConversationService(db)
-    artifacts = conv_svc.list_artifacts(run.conversation_id, limit=120)
-    return any(
-        artifact.task_id == task_id and artifact.artifact_type == "review_notes"
-        for artifact in artifacts
-    )
+    return (
+        db.query(conversation_models.ConversationArtifactModel)
+        .filter(
+            conversation_models.ConversationArtifactModel.conversation_id == run.conversation_id,
+            conversation_models.ConversationArtifactModel.task_id == task_id,
+            conversation_models.ConversationArtifactModel.artifact_type == "review_notes",
+        )
+        .first()
+    ) is not None
 
 
 def _task_is_ready(team_svc: TeamRunService, run_id: uuid.UUID, task_id: uuid.UUID, db: Session) -> bool:

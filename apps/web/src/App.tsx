@@ -897,11 +897,13 @@ export default function App() {
                 <div className="grid-cell"><label>리뷰 상태</label><span>{selectedTask.review_state || "-"}</span></div>
               </div>
               <div className="detail-actions-row">
-                <button onClick={() => void handleTaskAction("rerun")}>재실행</button>
-                <button onClick={() => void handleTaskAction("block")}>보류</button>
-                <button onClick={() => void handleTaskAction("unblock")}>해제</button>
-                <button className="success" onClick={() => void handleTaskAction("approve_review")}>리뷰 승인</button>
-                <button className="danger"  onClick={() => void handleTaskAction("reject_review")}>리뷰 반려</button>
+                <button disabled={planLoading} onClick={() => void handleTaskAction("rerun")}>재실행</button>
+                <button disabled={planLoading} onClick={() => void handleTaskAction("block")}>보류</button>
+                <button disabled={planLoading} onClick={() => void handleTaskAction("unblock")}>해제</button>
+                <button className="success" disabled={planLoading} onClick={() => void handleTaskAction("approve_review")}>
+                  {planLoading ? "처리 중…" : "리뷰 승인"}
+                </button>
+                <button className="danger" disabled={planLoading} onClick={() => void handleTaskAction("reject_review")}>리뷰 반려</button>
               </div>
             </div>
           </div>
