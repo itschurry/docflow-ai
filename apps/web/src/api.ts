@@ -1,4 +1,4 @@
-import type { OutputType, OversightMode, TeamBoardSnapshot, TeamRun, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength, JobDetail, JobStep } from "./types";
+import type { OutputType, OversightMode, ReviewMode, TeamBoardSnapshot, TeamRun, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength, JobDetail, JobStep } from "./types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -26,7 +26,7 @@ export async function createTeamRun(payload: {
   requestedBy: string;
   oversightMode: OversightMode;
   outputType: OutputType;
-  autoReviewMaxRounds: number;
+  reviewMode: ReviewMode;
 }): Promise<TeamBoardSnapshot> {
   return request<TeamBoardSnapshot>("/web/team-runs", {
     method: "POST",
@@ -36,7 +36,7 @@ export async function createTeamRun(payload: {
       requested_by: payload.requestedBy,
       oversight_mode: payload.oversightMode,
       output_type: payload.outputType,
-      auto_review_max_rounds: payload.autoReviewMaxRounds,
+      review_mode: payload.reviewMode,
       selected_agents: ["planner", "writer", "critic", "manager", "qa"],
     }),
   });
@@ -62,7 +62,7 @@ export function sendRequest(
     text: string;
     senderName: string;
     outputType: OutputType;
-    autoReviewMaxRounds: number;
+    reviewMode: ReviewMode;
     sourceFileIds: string[];
     referenceMode?: ReferenceMode;
     styleMode?: StyleMode;
@@ -76,7 +76,7 @@ export function sendRequest(
       text: payload.text,
       sender_name: payload.senderName,
       output_type: payload.outputType,
-      auto_review_max_rounds: payload.autoReviewMaxRounds,
+      review_mode: payload.reviewMode,
       source_file_ids: payload.sourceFileIds,
       reference_mode: payload.referenceMode ?? "auto",
       style_mode: payload.styleMode ?? "default",

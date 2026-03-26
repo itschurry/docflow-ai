@@ -20,13 +20,14 @@ import {
   deleteKnowledgeFile,
 } from "./api";
 import JobTimeline from "./JobTimeline";
-import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
+import type { FileUploadItem, OutputType, OversightMode, ReviewMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
 
-const AUTO_REVIEW_PRESETS = [
-  { label: "보수적 (2회)", value: 2 },
-  { label: "균형 (4회)", value: 4 },
-  { label: "집중 (6회)", value: 6 },
-] as const;
+const REVIEW_MODE_OPTIONS: { label: string; value: ReviewMode }[] = [
+  { label: "Fast — 빠른 기본 검토", value: "fast" },
+  { label: "Balanced — 기본 + 구조 검토", value: "balanced" },
+  { label: "Deep — 비평/검증 포함 심층 검토", value: "deep" },
+  { label: "Aggressive — 강한 비판/재검토 중심", value: "aggressive" },
+];
 
 const TASK_STATUS_COLUMNS = [
   { key: "todo",        label: "할 일",    colorClass: "col-todo" },
@@ -98,7 +99,7 @@ export default function App() {
   const [agentHandles, setAgentHandles] = useState<string[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
-  const [presetRounds, setPresetRounds] = useState<number>(4);
+  const [reviewMode, setReviewMode] = useState<ReviewMode>("balanced");
   // composerOutputType: per-request output format (shown in composer, not workspace creation)
   const [composerOutputType, setComposerOutputType] = useState<OutputType>("pptx");
   const [files, setFiles] = useState<FileUploadItem[]>([]);
@@ -252,7 +253,7 @@ export default function App() {
     setLoadingRuns(true);
     try {
       // output_type is now set per-request in the composer; workspace creation uses backend default
-      const snapshot = await createTeamRun({ requestedBy: "USER", oversightMode, outputType: composerOutputType, autoReviewMaxRounds: presetRounds });
+      const snapshot = await createTeamRun({ requestedBy: "USER", oversightMode, outputType: composerOutputType, reviewMode });
       setBoard(snapshot);
       setActiveRunId(snapshot.run.id);
       void refreshRuns();
@@ -292,7 +293,7 @@ export default function App() {
           : files.map((item) => item.id);
       const snapshot = await sendRequest(activeRunId, {
         text: composerText.trim(), senderName: "USER",
-        outputType: composerOutputType, autoReviewMaxRounds: presetRounds,
+        outputType: composerOutputType, reviewMode,
         sourceFileIds: sourceIds,
         referenceMode,
         styleMode,
@@ -485,9 +486,9 @@ export default function App() {
                 </select>
               </div>
               <div className="config-field">
-                <label>검토 강도</label>
-                <select value={presetRounds} onChange={(e) => setPresetRounds(Number(e.target.value))}>
-                  {AUTO_REVIEW_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                <label>Review Mode</label>
+                <select value={reviewMode} onChange={(e) => setReviewMode(e.target.value as ReviewMode)}>
+                  {REVIEW_MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
               <button className="action-button primary" onClick={handleCreateRun} disabled={loadingRuns}>

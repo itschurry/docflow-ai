@@ -1,5 +1,6 @@
 export type OutputType = "docx" | "xlsx" | "pptx" | "txt" | "md";
 export type OversightMode = "auto" | "manual";
+export type ReviewMode = "fast" | "balanced" | "deep" | "aggressive";
 export type ReferenceMode = "auto" | "all" | "selected";
 export type StyleMode = "default" | "formal" | "concise" | "friendly";
 export type StyleStrength = "low" | "medium" | "high";
@@ -72,6 +73,8 @@ export interface TeamRun {
   plan_status?: string;
   oversight_mode?: OversightMode;
   output_type?: OutputType;
+  review_mode?: ReviewMode;
+  /** @deprecated internal policy field — do not use in UI */
   auto_review_max_rounds?: number;
   selected_agents?: string[];
   requested_by?: string;

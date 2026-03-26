@@ -117,7 +117,8 @@ def serialize_team_run(run: TeamRunModel) -> dict:
         "selected_agents": list(run.selected_agents or []),
         "source_file_ids": list(run.source_file_ids or []),
         "source_ir_summary": run.source_ir_summary,
-        "auto_review_max_rounds": int(run.auto_review_max_rounds or 2),
+        "auto_review_max_rounds": int(run.auto_review_max_rounds or 2),  # deprecated: internal policy field
+        "review_mode": run.review_mode or "balanced",
         "final_artifact_id": str(run.final_artifact_id) if run.final_artifact_id else None,
         "created_at": run.created_at.isoformat(),
         "updated_at": run.updated_at.isoformat(),

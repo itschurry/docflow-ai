@@ -182,6 +182,41 @@ def _run_auto_review_max_rounds(run: conversation_models.TeamRunModel | None) ->
     return rounds
 
 
+def _normalize_review_mode(value: object | None) -> str:
+    """Normalize external review_mode input. Returns one of: fast|balanced|deep|aggressive."""
+    _VALID = {"fast", "balanced", "deep", "aggressive"}
+    if value is None:
+        return "balanced"
+    normalized = str(value).strip().lower()
+    if normalized not in _VALID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"review_mode must be one of: {', '.join(sorted(_VALID))}",
+        )
+    return normalized
+
+
+def _review_mode_policy(review_mode: str) -> dict:
+    """Map review_mode to internal runtime policy.
+
+    auto_review_max_rounds is the internal auto-rejection cap, NOT a user-facing depth metric.
+    """
+    policies = {
+        "fast":       {"auto_review_max_rounds": 1, "planner_profile": "fast"},
+        "balanced":   {"auto_review_max_rounds": 2, "planner_profile": "balanced"},
+        "deep":       {"auto_review_max_rounds": 3, "planner_profile": "deep"},
+        "aggressive": {"auto_review_max_rounds": 4, "planner_profile": "aggressive"},
+    }
+    return policies.get(review_mode, policies["balanced"])
+
+
+def _run_review_mode(run: conversation_models.TeamRunModel | None) -> str:
+    """Read review_mode from a run, falling back to 'balanced'."""
+    if not run:
+        return "balanced"
+    return getattr(run, "review_mode", None) or "balanced"
+
+
 def _infer_task_kind(artifact_goal: str) -> str:
     goal = str(artifact_goal or "").strip().lower()
     if goal == "review_notes":
@@ -419,7 +454,8 @@ def create_web_team_run(
     mode = "team-autonomous"
     oversight_mode = _normalize_oversight_mode(payload.get("oversight_mode"))
     output_type = _normalize_output_type(payload.get("output_type"))
-    auto_review_max_rounds = _normalize_auto_review_max_rounds(payload.get("auto_review_max_rounds"))
+    review_mode = _normalize_review_mode(payload.get("review_mode"))
+    policy = _review_mode_policy(review_mode)
     valid = {a["handle"] for a in orchestrator.list_agents_info()}
     raw_selected = payload.get("selected_agents")
     if not isinstance(raw_selected, list):
@@ -459,7 +495,8 @@ def create_web_team_run(
         selected_agents=selected,
         source_file_ids=[str(item.id) for item in source_files],
         source_ir_summary=source_ir_summary,
-        auto_review_max_rounds=auto_review_max_rounds,
+        review_mode=review_mode,
+        auto_review_max_rounds=policy["auto_review_max_rounds"],
         status="idle",
     )
     _ensure_team_run_sessions(team_svc, run)
@@ -825,7 +862,7 @@ async def send_web_team_run_request(
     text = str(payload.get("text") or "").strip()
     sender_name = str(payload.get("sender_name") or "web_user").strip() or "web_user"
     output_type = payload.get("output_type")
-    auto_review_max_rounds = payload.get("auto_review_max_rounds")
+    review_mode_raw = payload.get("review_mode")
     raw_source_file_ids = payload.get("source_file_ids")
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -841,8 +878,10 @@ async def send_web_team_run_request(
         run.output_type = _normalize_output_type(output_type)
     elif not str(run.request_text or "").strip():
         run.output_type = _infer_output_type_from_request_text(text)
-    if auto_review_max_rounds is not None:
-        run.auto_review_max_rounds = _normalize_auto_review_max_rounds(auto_review_max_rounds)
+    if review_mode_raw is not None:
+        run.review_mode = _normalize_review_mode(review_mode_raw)
+        policy = _review_mode_policy(run.review_mode)
+        run.auto_review_max_rounds = policy["auto_review_max_rounds"]
     reference_mode = str(payload.get("reference_mode") or "auto").strip()
     style_mode = str(payload.get("style_mode") or "default").strip()
     style_strength = str(payload.get("style_strength") or "medium").strip()
@@ -948,7 +987,7 @@ async def send_web_team_run_request(
         status="planning",
         plan_status="pending",
     )
-    brief, task_defs = await _decompose_team_request(planning_request, selected, output_type=run.output_type)
+    brief, task_defs = await _decompose_team_request(planning_request, selected, output_type=run.output_type, review_mode=_run_review_mode(run))
 
     planner_task = team_svc.create_task(
         team_run_id=run.id,
@@ -2654,6 +2693,7 @@ async def _decompose_team_request(
     selected_agents: list[str],
     *,
     output_type: str = "docx",
+    review_mode: str = "balanced",
 ) -> tuple[str, list[dict]]:
     orchestrator._ensure_loaded()
     planner = orchestrator._agents.get("planner")
@@ -2667,6 +2707,7 @@ async def _decompose_team_request(
         f"요청:\n{request_text}\n\n"
         f"허용 담당자: {', '.join(selected_agents)}\n"
         f"워크플로 프리셋: {preset}\n"
+        f"Review Mode: {review_mode}\n"
         "작업은 3~6개로 제한하고, title/description/owner_handle/artifact_goal/depends_on_titles/review_required를 채우세요."
     )
     schema = {
@@ -3018,7 +3059,8 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
     payload["run"]["leader_session_id"] = str(leader_session.id) if leader_session else None
     payload["run"]["active_sessions"] = len([session for session in sessions if session.status != "offline"])
     payload["run"]["workflow_preset"] = _run_workflow_preset(run)
-    payload["run"]["auto_review_max_rounds"] = _run_auto_review_max_rounds(run)
+    payload["run"]["review_mode"] = _run_review_mode(run)
+    payload["run"]["auto_review_max_rounds"] = _run_auto_review_max_rounds(run)  # internal policy field
     payload["run"]["auto_review_rounds_used"] = auto_review_rounds_used
     payload["run"]["rag_config"] = run.rag_config or {}
     return payload

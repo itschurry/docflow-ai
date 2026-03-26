@@ -35,6 +35,7 @@ class TeamRunService:
         source_file_ids: list[uuid.UUID] | list[str] | None = None,
         source_ir_summary: str = "",
         auto_review_max_rounds: int = 2,
+        review_mode: str = "balanced",
         status: str = "idle",
     ) -> TeamRunModel:
         run = TeamRunModel(
@@ -51,6 +52,7 @@ class TeamRunService:
             source_file_ids=[str(item) for item in (source_file_ids or [])],
             source_ir_summary=source_ir_summary or "",
             auto_review_max_rounds=int(auto_review_max_rounds or 2),
+            review_mode=review_mode or "balanced",
             status=status,
         )
         self.db.add(run)

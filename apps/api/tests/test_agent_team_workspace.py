@@ -189,7 +189,7 @@ def test_team_run_request_bootstraps_board_and_activity(client):
     board = planned.json()
     assert board["run"]["status"] == "done"
     assert board["run"]["oversight_mode"] == "auto"
-    assert board["run"]["auto_review_max_rounds"] == 2
+    assert board["run"]["review_mode"] == "balanced"
     assert board["conversation"]["mode"] == "team-autonomous"
     assert len(board["tasks"]) >= 4
     assert any(task["owner_handle"] == "planner" and task["status"] == "done" for task in board["tasks"])
@@ -207,40 +207,40 @@ def test_team_run_request_bootstraps_board_and_activity(client):
     assert any(item["role"] == "leader" for item in board_resp.json()["sessions"])
 
 
-def test_team_run_auto_review_max_rounds_can_be_configured(client):
+def test_team_run_review_mode_can_be_configured(client):
     _ensure_schema()
     created = client.post(
         "/web/team-runs",
         json={
-            "title": "Round Config Run",
+            "title": "Review Mode Config Run",
             "selected_agents": ["planner", "writer", "critic", "manager"],
-            "auto_review_max_rounds": 4,
+            "review_mode": "deep",
         },
     )
     assert created.status_code == 201
     run_id = created.json()["run"]["id"]
-    assert created.json()["run"]["auto_review_max_rounds"] == 4
+    assert created.json()["run"]["review_mode"] == "deep"
 
     planned = client.post(
         f"/web/team-runs/{run_id}/requests",
-        json={"text": "시장 조사 보고서를 작성해줘", "sender_name": "ceo", "auto_review_max_rounds": 5},
+        json={"text": "시장 조사 보고서를 작성해줘", "sender_name": "ceo", "review_mode": "aggressive"},
     )
     assert planned.status_code == 202
-    assert planned.json()["run"]["auto_review_max_rounds"] == 5
+    assert planned.json()["run"]["review_mode"] == "aggressive"
 
 
-def test_team_run_auto_review_max_rounds_validation(client):
+def test_team_run_review_mode_validation(client):
     _ensure_schema()
     bad_create = client.post(
         "/web/team-runs",
         json={
-            "title": "Bad Round Config Run",
+            "title": "Bad Review Mode Run",
             "selected_agents": ["planner", "writer", "critic", "manager"],
-            "auto_review_max_rounds": 0,
+            "review_mode": "invalid_mode",
         },
     )
     assert bad_create.status_code == 400
-    assert "auto_review_max_rounds" in bad_create.text
+    assert "review_mode" in bad_create.text
 
 
 def test_team_run_bootstrap_exposes_sessions_and_inbox(client):
