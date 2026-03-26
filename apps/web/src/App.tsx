@@ -15,6 +15,7 @@ import {
   updateTask,
   uploadFile,
   deleteTeamRun,
+  cancelTeamRun,
   listKnowledgeFiles,
   getFileChunks,
   deleteKnowledgeFile,
@@ -173,12 +174,14 @@ export default function App() {
   );
 
   useEffect(() => {
-    const agents = board?.run?.selected_agents ?? [];
-    setSelectedAgents(agents);
-    // Sync output type from workspace when switching boards
     if (board?.run?.output_type) {
       setComposerOutputType(board.run.output_type as OutputType);
     }
+  }, [board?.run?.id]);
+
+  useEffect(() => {
+    const agents = board?.run?.selected_agents ?? [];
+    setSelectedAgents(agents);
     // Sync sidebar title/status from latest board poll
     if (board?.run) {
       setRuns((prev) => prev.map((r) =>
@@ -274,6 +277,16 @@ export default function App() {
       void refreshRuns();
     } catch {
       setError("삭제 작업 중 오류 발생");
+    }
+  }
+
+  async function handleCancelRun() {
+    if (!activeRunId) return;
+    try {
+      const snapshot = await cancelTeamRun(activeRunId);
+      setBoard(snapshot);
+    } catch {
+      setError("작업 중단 실패");
     }
   }
 
@@ -603,6 +616,11 @@ export default function App() {
               <button className="control-button primary" onClick={() => setIsPlanModalOpen(true)}>
                 계획 관리
               </button>
+              {isRunActive && (
+                <button className="control-button danger" onClick={() => void handleCancelRun()}>
+                  ⏹ 중단
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -983,11 +1001,9 @@ export default function App() {
               {/* Upload area */}
               <section className="kd-section">
                 <h3 className="kd-section-title">문서 업로드</h3>
-                <label className="kd-upload-zone">
+                <label className="kd-upload-btn">
                   <input type="file" multiple style={{ display: "none" }} onChange={(e) => { handleUpload(e); }} />
-                  <div className="kd-upload-icon">📂</div>
-                  <p className="kd-upload-label">파일을 클릭하거나 드래그하여 업로드</p>
-                  <p className="kd-upload-hint">PDF, DOCX, TXT, XLSX 등 지원</p>
+                  📎 파일 선택
                 </label>
               </section>
 

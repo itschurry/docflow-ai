@@ -374,6 +374,10 @@ input, button, textarea, select {
   background: var(--brand); color: #fff; border-color: var(--brand);
 }
 .control-button.primary:hover { background: var(--brand-hover); border-color: var(--brand-hover); transform: translateY(-1px); box-shadow: 0 4px 12px var(--brand-glow); color: #fff; }
+.control-button.danger {
+  background: var(--danger-soft, #fee2e2); color: var(--danger, #dc2626); border-color: var(--danger, #dc2626);
+}
+.control-button.danger:hover { background: var(--danger, #dc2626); color: #fff; }
 
 /* Error banner */
 .alert-banner {
@@ -1136,17 +1140,16 @@ input, button, textarea, select {
   border-radius: var(--r-full); color: var(--text-4); font-weight: 600;
 }
 
-/* Upload zone in drawer */
-.kd-upload-zone {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 28px; border: 2px dashed var(--border-2); border-radius: var(--r-lg);
-  cursor: pointer; transition: all var(--dur); background: var(--surface-1);
+/* Upload button in drawer */
+.kd-upload-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: var(--r-md);
+  background: var(--brand); color: #fff;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background var(--dur);
 }
-.kd-upload-zone:hover { border-color: var(--brand); background: var(--brand-soft); }
-.kd-upload-zone input { display: none; }
-.kd-upload-icon { font-size: 32px; }
-.kd-upload-label { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0; }
-.kd-upload-hint { font-size: 11px; color: var(--text-4); margin: 0; }
+.kd-upload-btn:hover { background: var(--brand-dark, #4338ca); }
+.kd-upload-btn input { display: none; }
 
 /* Config grid */
 .kd-config-grid { display: flex; flex-direction: column; gap: 14px; }

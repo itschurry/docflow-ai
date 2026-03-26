@@ -177,6 +177,10 @@ export async function deleteTeamRun(runId: string): Promise<{ ok: boolean }> {
   });
 }
 
+export function cancelTeamRun(runId: string): Promise<TeamBoardSnapshot> {
+  return request<TeamBoardSnapshot>(`/web/team-runs/${runId}/cancel`, { method: "POST" });
+}
+
 export function getJobDetail(jobId: string): Promise<JobDetail> {
   return request<JobDetail>(`/api/jobs/${jobId}`);
 }

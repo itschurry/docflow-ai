@@ -233,6 +233,10 @@ def _slugify_filename(value: str, default: str = "docflow") -> str:
     return slug[:80] or default
 
 
+def _date_filename() -> str:
+    return now_utc().strftime("%Y-%m-%d_%H-%M")
+
+
 def _ensure_team_export_project(db: Session) -> ProjectModel:
     project = (
         db.execute(
@@ -521,6 +525,21 @@ def get_web_team_run(
     if not run:
         raise HTTPException(status_code=404, detail="Team run not found")
     return serialize_team_run(run)
+
+
+@router.post("/web/team-runs/{team_run_id}/cancel", status_code=200)
+def cancel_web_team_run(
+    team_run_id: UUID,
+    db: Session = Depends(get_db),
+):
+    svc = TeamRunService(db)
+    run = svc.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    run.status = "canceled"
+    db.commit()
+    db.refresh(run)
+    return _build_team_board_snapshot(db, run)
 
 
 @router.delete("/web/team-runs/{team_run_id}", status_code=200)
@@ -1969,7 +1988,7 @@ def export_web_team_run_deliverable(
 
     title = str(run.title or "DocFlow Team Deliverable").strip()
     content = str(deliverable.get("content") or "").strip()
-    filename_base = _slugify_filename(title, default="team-deliverable")
+    filename_base = _date_filename()
     structured = _build_structured_deliverable(title, content)
     document_ir = deliverable.get("structured_ir") or _build_deliverable_ir(title=title, content=content, run=run)
     extracted_text = extract_text_from_ir(document_ir) or _structured_deliverable_to_markdown(structured, content)
