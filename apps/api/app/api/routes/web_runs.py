@@ -1,67 +1,19 @@
+import asyncio
 from pathlib import Path
-import threading
-import hashlib
-import hmac
-import json
 import re
-import shutil
+import sys as _sys
 import uuid
 from uuid import UUID
 
-import asyncio
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal, get_db
-from app.core.state_machine import JobStatus
 from app.core.time_utils import now_utc
 from app import conversation_models
-from app.models import DocumentChunkModel, FileModel, JobModel, ProjectModel, PromptLogModel, TaskModel
-from app.schemas.plan import PlanResult
-from app.schemas.request_response import (
-    ArtifactSummary,
-    CreateJobRequest,
-    CreateJobResponse,
-    CreateProjectRequest,
-    CreateProjectResponse,
-    CreateOpsApiKeyRequest,
-    CreateOpsApiKeyResponse,
-    JobDetailResponse,
-    DeadLetterItem,
-    DeadLetterListResponse,
-    DeadLetterReplayRequest,
-    DeadLetterReplayResponse,
-    JobHistoryItem,
-    ProjectJobsResponse,
-    PromptLogSummary,
-    ReplayAuditItem,
-    ReplayAuditListResponse,
-    TaskSummary,
-    UploadFileResponse,
-)
-from app.services.anthropic_skills import AnthropicSkillsDocumentGenerator
-from app.services.anthropic_skills import anthropic_skills_available
-from app.services.anthropic_skills import default_document_provider
-from app.services.document_ir import build_slides_ir
-from app.services.document_ir import build_sheet_ir_from_outline
-from app.services.document_ir import build_word_ir_from_markdown
-from app.services.document_ir import extract_text_from_ir
-from app.services.document_ir import parse_document_to_ir
-from app.services.document_ir import render_ir_to_docx_bytes
-from app.services.document_ir import render_ir_to_pptx_bytes
-from app.services.document_ir import render_ir_to_xlsx_bytes
-from app.services.document_ir import summarize_document_ir
-from app.services.job_dispatcher import dispatch_job
-from app.services.llm_router import get_llm_provider
-from app.services.openai_document_generator import OpenAIDocumentIRGenerator
-from app.services.openai_document_generator import openai_document_generation_available
-from app.services.planner_agent import PlannerAgent
-from app.adapters.telegram.handlers import process_update
-from app.adapters.telegram.dispatcher import DispatchResult
 from app.conversations.service import ConversationService
 from app.conversations.serializer import (
     serialize_agent_run,
@@ -75,73 +27,83 @@ from app.conversations.serializer import (
     serialize_team_session,
     serialize_team_task,
 )
+from app.models import DocumentChunkModel, FileModel, ProjectModel, TaskModel
 from app.orchestrator.engine import orchestrator
 from app.team_runtime.service import TeamRunService
-from app.services.indexing_service import index_file
+from app.services.anthropic_skills import (
+    AnthropicSkillsDocumentGenerator as _AnthropicSkillsDocumentGenerator_impl,
+    anthropic_skills_available as _anthropic_skills_available_impl,
+    default_document_provider,
+)
+from app.services.document_ir import (
+    build_slides_ir,
+    build_sheet_ir_from_outline,
+    build_word_ir_from_markdown,
+    extract_text_from_ir,
+    parse_document_to_ir,
+    render_ir_to_docx_bytes,
+    render_ir_to_pptx_bytes,
+    render_ir_to_xlsx_bytes,
+    summarize_document_ir,
+)
+from app.services.llm_router import get_llm_provider
+from app.services.openai_document_generator import (
+    OpenAIDocumentIRGenerator as _OpenAIDocumentIRGenerator_impl,
+    openai_document_generation_available as _openai_document_generation_available_impl,
+)
+from ._shared import (
+    _file_analysis_payload,
+    _normalize_web_selected_agents,
+    TEAM_EXPORT_PROJECT_NAME,
+    AUTO_REVIEW_MAX_ROUNDS,
+    AUTO_REVIEW_MAX_ROUNDS_MIN,
+    AUTO_REVIEW_MAX_ROUNDS_MAX,
+    AUTO_REVIEW_REJECT_KEYWORDS,
+    TEAM_ARTIFACT_STATUS_PHRASES,
+    PRESENTATION_REQUEST_KEYWORDS,
+    SHEET_REQUEST_KEYWORDS,
+    OUTPUT_TYPE_PRESET_MAP,
+    WEB_UPLOAD_PROJECT_NAME,
+)
+
+
+# ---------------------------------------------------------------------------
+# Proxy callables so that monkeypatch on `app.api.routes.<name>` is forwarded
+# to the live lookup used inside route handlers (testability shim).
+# ---------------------------------------------------------------------------
+class _RouteProxy:
+    """Callable proxy that delegates through app.api.routes at call time."""
+
+    def __init__(self, attr_name: str, default_impl):
+        self._attr_name = attr_name
+        self._default_impl = default_impl
+
+    def __call__(self, *args, **kwargs):
+        pkg = _sys.modules.get("app.api.routes")
+        if pkg is not None:
+            fn = pkg.__dict__.get(self._attr_name)
+            if fn is not None and fn is not self:
+                return fn(*args, **kwargs)
+        return self._default_impl(*args, **kwargs)
+
+    def __repr__(self):
+        return f"_RouteProxy({self._attr_name!r})"
+
+
+anthropic_skills_available = _RouteProxy(
+    "anthropic_skills_available", _anthropic_skills_available_impl
+)
+openai_document_generation_available = _RouteProxy(
+    "openai_document_generation_available", _openai_document_generation_available_impl
+)
+AnthropicSkillsDocumentGenerator = _RouteProxy(
+    "AnthropicSkillsDocumentGenerator", _AnthropicSkillsDocumentGenerator_impl
+)
+OpenAIDocumentIRGenerator = _RouteProxy(
+    "OpenAIDocumentIRGenerator", _OpenAIDocumentIRGenerator_impl
+)
 
 router = APIRouter()
-
-AUTO_REVIEW_MAX_ROUNDS = 2
-AUTO_REVIEW_MAX_ROUNDS_MIN = 1
-AUTO_REVIEW_MAX_ROUNDS_MAX = 6
-TEAM_EXPORT_PROJECT_NAME = "Agent Team Exports"
-WEB_UPLOAD_PROJECT_NAME = "Web Workspace Uploads"
-AUTO_REVIEW_REJECT_KEYWORDS = (
-    "반려",
-    "재작성",
-    "재작업",
-    "수정",
-    "보강",
-    "누락",
-    "부족",
-    "오류",
-    "불명확",
-    "출처",
-)
-TEAM_ARTIFACT_STATUS_PHRASES = (
-    "작성 중",
-    "대기 중",
-    "준비 중",
-    "제출 필요",
-    "초안 대기",
-    "검토 준비 완료",
-    "다음 실행",
-    "검토 예정",
-)
-PRESENTATION_REQUEST_KEYWORDS = (
-    "발표",
-    "발표자료",
-    "발표 자료",
-    "ppt",
-    "pptx",
-    "슬라이드",
-    "presentation",
-    "deck",
-)
-SHEET_REQUEST_KEYWORDS = (
-    "xlsx",
-    "excel",
-    "시트",
-    "sheet",
-    "표",
-    "예산표",
-    "스프레드시트",
-)
-OUTPUT_TYPE_PRESET_MAP = {
-    "docx": "docx_brief_team",
-    "xlsx": "xlsx_analysis_team",
-    "pptx": "presentation_team",
-}
-
-
-@router.get("/api/docs-redirect", include_in_schema=False)
-def docs_redirect():
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/docs")
-
-
-def _secret_hash(secret: str) -> str:
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
 def _normalize_oversight_mode(value: object | None) -> str:
@@ -153,8 +115,8 @@ def _normalize_oversight_mode(value: object | None) -> str:
 
 def _normalize_output_type(value: object | None) -> str:
     normalized = str(value or "docx").strip().lower()
-    if normalized not in {"docx", "xlsx", "pptx"}:
-        raise HTTPException(status_code=400, detail="output_type must be docx, xlsx, or pptx")
+    if normalized not in {"docx", "xlsx", "pptx", "txt", "md"}:
+        raise HTTPException(status_code=400, detail="output_type must be docx, xlsx, pptx, txt, or md")
     return normalized
 
 
@@ -253,23 +215,6 @@ def _ensure_team_export_project(db: Session) -> ProjectModel:
     return project
 
 
-def _ensure_web_upload_project(db: Session) -> ProjectModel:
-    project = (
-        db.execute(
-            select(ProjectModel).where(ProjectModel.name == WEB_UPLOAD_PROJECT_NAME).limit(1)
-        ).scalar_one_or_none()
-    )
-    if project:
-        return project
-    project = ProjectModel(
-        name=WEB_UPLOAD_PROJECT_NAME,
-        description="Internal project for workspace uploads",
-    )
-    db.add(project)
-    db.flush()
-    return project
-
-
 def _persist_team_export_file(
     db: Session,
     *,
@@ -313,16 +258,6 @@ def _ensure_files_document_columns(db: Session) -> None:
         db.execute(text("ALTER TABLE files ADD COLUMN document_type VARCHAR(30) NOT NULL DEFAULT ''"))
     if "document_summary" not in columns:
         db.execute(text("ALTER TABLE files ADD COLUMN document_summary TEXT NOT NULL DEFAULT ''"))
-
-
-def _file_analysis_payload(file_row: FileModel) -> dict:
-    file_ir = parse_document_to_ir(file_row.stored_path, file_row.mime_type)
-    summary = summarize_document_ir(file_ir)
-    return {
-        "document_type": str(file_ir.get("document_type") or file_row.document_type or ""),
-        "document_summary": summary or file_row.document_summary or "",
-        "document_ir": file_ir,
-    }
 
 
 def _collect_source_files(
@@ -448,866 +383,6 @@ def _build_xlsx_ir_from_markdown(title: str, content: str) -> dict:
         "document_type": "sheet",
         "sheets": sheets,
     }
-
-
-def _has_active_ops_keys(db: Session) -> bool:
-    from app.models import OpsApiKeyModel
-
-    row = db.execute(
-        select(OpsApiKeyModel.id).where(
-            OpsApiKeyModel.is_active.is_(True)).limit(1)
-    ).first()
-    return row is not None
-
-
-def _authorize_ops_request(
-    db: Session,
-    x_ops_token: str | None,
-    x_ops_key_id: str | None,
-    x_ops_key_secret: str | None,
-) -> str:
-    from app.models import OpsApiKeyModel
-
-    expected = settings.ops_api_token.strip()
-    has_keys = _has_active_ops_keys(db)
-
-    if expected and x_ops_token and hmac.compare_digest(x_ops_token, expected):
-        return "legacy-token"
-
-    if x_ops_key_id and x_ops_key_secret:
-        key = db.execute(
-            select(OpsApiKeyModel).where(
-                OpsApiKeyModel.key_id == x_ops_key_id,
-                OpsApiKeyModel.is_active.is_(True),
-            )
-        ).scalar_one_or_none()
-        if key and hmac.compare_digest(key.secret_hash, _secret_hash(x_ops_key_secret)):
-            key.last_used_at = now_utc()
-            db.add(key)
-            db.commit()
-            return f"apikey:{key.key_id}"
-
-    if not expected and not has_keys:
-        return "anonymous"
-
-    raise HTTPException(status_code=401, detail="Invalid ops credentials")
-
-
-def _replay_marker_path(file_name: str) -> Path:
-    return Path(settings.dead_letter_dir) / "replayed" / f"{file_name}.done.json"
-
-
-def _append_replay_audit(
-    *,
-    action: str,
-    file_name: str,
-    job_id: str,
-    actor: str,
-    result: str,
-) -> None:
-    dead_letter_dir = Path(settings.dead_letter_dir)
-    dead_letter_dir.mkdir(parents=True, exist_ok=True)
-    audit_path = dead_letter_dir / "replay_audit.jsonl"
-    record = {
-        "at": now_utc().isoformat(),
-        "action": action,
-        "file_name": file_name,
-        "job_id": job_id,
-        "actor": actor,
-        "result": result,
-    }
-    with audit_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=True) + "\n")
-
-
-@router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@router.post("/api/projects", response_model=CreateProjectResponse)
-def create_project(payload: CreateProjectRequest, db: Session = Depends(get_db)) -> CreateProjectResponse:
-    project = ProjectModel(name=payload.name, description=payload.description)
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-
-    return CreateProjectResponse(
-        id=project.id,
-        name=project.name,
-        description=project.description,
-        created_at=project.created_at,
-    )
-
-
-@router.get("/api/projects/{project_id}/jobs", response_model=ProjectJobsResponse)
-def list_project_jobs(project_id: UUID, db: Session = Depends(get_db)) -> ProjectJobsResponse:
-    project = db.get(ProjectModel, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    rows = db.execute(
-        select(JobModel)
-        .where(JobModel.project_id == project_id)
-        .order_by(JobModel.created_at.desc())
-    ).scalars().all()
-
-    return ProjectJobsResponse(
-        project_id=project_id,
-        jobs=[
-            JobHistoryItem(
-                id=item.id,
-                job_type=item.job_type,
-                status=item.status,
-                created_at=item.created_at,
-                updated_at=item.updated_at,
-            )
-            for item in rows
-        ],
-    )
-
-
-@router.post("/api/projects/{project_id}/files", response_model=UploadFileResponse)
-def upload_file(
-    project_id: UUID,
-    uploaded_file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> UploadFileResponse:
-    project = db.get(ProjectModel, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    filename = uploaded_file.filename or "uploaded.bin"
-
-    project_dir = Path(settings.upload_dir) / str(project_id)
-    project_dir.mkdir(parents=True, exist_ok=True)
-    stored_path = project_dir / filename
-
-    with stored_path.open("wb") as f:
-        shutil.copyfileobj(uploaded_file.file, f)
-
-    size = stored_path.stat().st_size
-    file_ir = parse_document_to_ir(str(stored_path), uploaded_file.content_type)
-    extracted_text = extract_text_from_ir(file_ir)
-    document_type = str(file_ir.get("document_type") or "")
-    document_summary = summarize_document_ir(file_ir)
-
-    file_row = FileModel(
-        project_id=project_id,
-        job_id=None,
-        original_name=filename,
-        stored_path=str(stored_path),
-        mime_type=uploaded_file.content_type or "application/octet-stream",
-        size=size,
-        source_type="upload",
-        extracted_text=extracted_text,
-        document_type=document_type,
-        document_summary=document_summary,
-    )
-    db.add(file_row)
-    db.commit()
-    db.refresh(file_row)
-
-    index_result = index_file(file_row, db)
-    if index_result["chunk_count"] > 0:
-        db.commit()
-
-    return UploadFileResponse(
-        id=file_row.id,
-        project_id=file_row.project_id,
-        original_name=file_row.original_name,
-        mime_type=file_row.mime_type,
-        size=file_row.size,
-        source_type=file_row.source_type,
-        document_type=document_type,
-        document_summary=document_summary,
-        document_ir=file_ir,
-        created_at=file_row.created_at,
-    )
-
-
-@router.post("/web/files", response_model=UploadFileResponse)
-def upload_web_file(
-    uploaded_file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> UploadFileResponse:
-    project = _ensure_web_upload_project(db)
-    return upload_file(project.id, uploaded_file, db)
-
-
-@router.get("/web/knowledge", status_code=200)
-def list_web_knowledge(db: Session = Depends(get_db)):
-    """List all files in the web upload project with chunk counts and index status."""
-    project = _ensure_web_upload_project(db)
-    files = db.execute(
-        select(FileModel)
-        .where(FileModel.project_id == project.id)
-        .order_by(FileModel.created_at.desc())
-    ).scalars().all()
-
-    result = []
-    for f in files:
-        chunks = db.execute(
-            select(DocumentChunkModel)
-            .where(DocumentChunkModel.file_id == f.id)
-        ).scalars().all()
-        chunk_count = len(chunks)
-        failed_count = sum(1 for c in chunks if c.index_status == "failed")
-        if chunk_count == 0:
-            index_status = "not_indexed"
-        elif failed_count == chunk_count:
-            index_status = "failed"
-        else:
-            index_status = "indexed"
-        result.append({
-            "id": str(f.id),
-            "original_name": f.original_name,
-            "mime_type": f.mime_type,
-            "document_type": f.document_type or "",
-            "document_summary": f.document_summary or "",
-            "created_at": f.created_at.isoformat() if f.created_at else None,
-            "chunk_count": chunk_count,
-            "index_status": index_status,
-        })
-    return {"items": result}
-
-
-@router.get("/web/knowledge/{file_id}/chunks", status_code=200)
-def list_web_knowledge_chunks(file_id: UUID, db: Session = Depends(get_db)):
-    """List document chunks for a specific file (for evidence panel)."""
-    chunks = db.execute(
-        select(DocumentChunkModel)
-        .where(DocumentChunkModel.file_id == file_id)
-        .order_by(DocumentChunkModel.chunk_index)
-    ).scalars().all()
-    return {
-        "items": [
-            {
-                "id": str(c.id),
-                "section": c.section or "",
-                "chunk_index": c.chunk_index,
-                "content": c.content[:500],
-                "index_status": c.index_status,
-            }
-            for c in chunks
-        ]
-    }
-
-
-@router.post("/api/projects/{project_id}/jobs", response_model=CreateJobResponse)
-async def create_job(
-    project_id: UUID,
-    payload: CreateJobRequest,
-    async_dispatch: bool = Query(
-        False, description="Return immediately and dispatch in background thread"),
-    db: Session = Depends(get_db),
-) -> CreateJobResponse:
-    project = db.get(ProjectModel, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    planner = PlannerAgent(provider=get_llm_provider())
-    try:
-        plan: PlanResult = await planner.plan(payload.request, payload.output_types)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"문서 계획 생성에 실패했습니다. 잠시 후 다시 시도해 주세요. ({exc})") from exc
-    now = now_utc()
-
-    job = JobModel(
-        project_id=project_id,
-        job_type=plan.job_type,
-        request_text=payload.request,
-        status=JobStatus.QUEUED,
-        created_by="api_user",
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(job)
-    db.flush()
-
-    for task_type in plan.tasks:
-        db.add(
-            TaskModel(
-                job_id=job.id,
-                task_type=task_type,
-                status="PENDING",
-                input_payload_json={},
-                output_payload_json={},
-            )
-        )
-
-    db.commit()
-
-    # Keep legacy synchronous behavior by default (tests rely on this).
-    # For web clients, async_dispatch=true avoids request timeout in inline mode.
-    if async_dispatch and settings.execution_backend == "inline":
-        threading.Thread(target=dispatch_job, args=(
-            job.id,), daemon=True).start()
-    else:
-        dispatch_job(job.id)
-
-    db.refresh(job)
-
-    return CreateJobResponse(
-        job_id=job.id,
-        project_id=job.project_id,
-        status=job.status,
-        job_type=job.job_type,
-    )
-
-
-@router.get("/api/jobs/{job_id}", response_model=JobDetailResponse)
-def get_job(job_id: UUID, db: Session = Depends(get_db)) -> JobDetailResponse:
-    job = db.get(JobModel, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return JobDetailResponse(
-        id=job.id,
-        project_id=job.project_id,
-        job_type=job.job_type,
-        request_text=job.request_text,
-        status=job.status,
-        created_by=job.created_by,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
-
-
-@router.get("/api/jobs/{job_id}/artifacts")
-def get_job_artifacts(job_id: UUID, db: Session = Depends(get_db)) -> dict:
-    job = db.get(JobModel, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    artifacts = db.execute(select(FileModel).where(
-        FileModel.job_id == job_id)).scalars().all()
-    tasks = db.execute(select(TaskModel).where(
-        TaskModel.job_id == job_id)).scalars().all()
-
-    return {
-        "job_id": str(job_id),
-        "artifacts": [
-            ArtifactSummary(
-                id=item.id,
-                original_name=item.original_name,
-                stored_path=item.stored_path,
-                source_type=item.source_type,
-                document_type=item.document_type or "",
-                document_summary=item.document_summary or "",
-            ).model_dump()
-            for item in artifacts
-        ],
-        "tasks": [
-            TaskSummary(id=task.id, task_type=task.task_type,
-                        status=task.status).model_dump()
-            for task in tasks
-        ],
-    }
-
-
-@router.get("/api/files/{file_id}/analysis")
-def get_file_analysis(file_id: UUID, db: Session = Depends(get_db)) -> dict:
-    file_row = db.get(FileModel, file_id)
-    if not file_row:
-        raise HTTPException(status_code=404, detail="File not found")
-    analysis = _file_analysis_payload(file_row)
-    return {
-        "file": {
-            "id": str(file_row.id),
-            "project_id": str(file_row.project_id),
-            "original_name": file_row.original_name,
-            "mime_type": file_row.mime_type,
-            "size": file_row.size,
-            "source_type": file_row.source_type,
-            "document_type": analysis["document_type"],
-            "document_summary": analysis["document_summary"],
-            "created_at": file_row.created_at.isoformat(),
-        },
-        "document_ir": analysis["document_ir"],
-        "extracted_text": file_row.extracted_text or extract_text_from_ir(analysis["document_ir"]),
-    }
-
-
-@router.get("/api/jobs/{job_id}/status/stream")
-async def stream_job_status(job_id: UUID):
-    """SSE(Server-Sent Events) 엔드포인트 — 작업 완료/실패 시 스트림 종료."""
-    check_db = SessionLocal()
-    try:
-        job = check_db.get(JobModel, job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
-    finally:
-        check_db.close()
-
-    async def _event_generator():
-        terminal_statuses = {JobStatus.COMPLETED,
-                             JobStatus.FAILED, JobStatus.CANCELLED}
-        while True:
-            loop_db = SessionLocal()
-            try:
-                current_job = loop_db.get(JobModel, job_id)
-                tasks = loop_db.execute(
-                    select(TaskModel).where(TaskModel.job_id == job_id)
-                ).scalars().all()
-            finally:
-                loop_db.close()
-
-            event_data = json.dumps({
-                "job_id": str(job_id),
-                "status": current_job.status if current_job else "unknown",
-                "tasks": [
-                    {"id": str(t.id), "task_type": t.task_type,
-                     "status": t.status}
-                    for t in tasks
-                ],
-            })
-            yield f"data: {event_data}\n\n"
-
-            if current_job and JobStatus(current_job.status) in terminal_statuses:
-                break
-            await asyncio.sleep(2)
-
-    return StreamingResponse(
-        _event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.post("/api/jobs/{job_id}/retry")
-def retry_job(job_id: UUID, db: Session = Depends(get_db)) -> dict:
-    job = db.get(JobModel, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    current = JobStatus(job.status)
-    if current not in {JobStatus.FAILED, JobStatus.CANCELLED}:
-        raise HTTPException(
-            status_code=400, detail="Retry only allowed from FAILED/CANCELLED")
-
-    job.status = JobStatus.QUEUED
-    job.updated_at = now_utc()
-    db.add(job)
-    db.commit()
-    dispatch_job(job_id)
-    db.refresh(job)
-    return {"job_id": str(job_id), "status": job.status}
-
-
-@router.get("/api/jobs/{job_id}/prompt-logs")
-def get_job_prompt_logs(job_id: UUID, db: Session = Depends(get_db)) -> dict:
-    job = db.get(JobModel, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    task_ids = db.execute(select(TaskModel.id).where(
-        TaskModel.job_id == job_id)).scalars().all()
-    if not task_ids:
-        return {"job_id": str(job_id), "logs": []}
-
-    logs = db.execute(
-        select(PromptLogModel)
-        .where(PromptLogModel.task_id.in_(task_ids))
-        .order_by(PromptLogModel.created_at.desc())
-    ).scalars().all()
-
-    return {
-        "job_id": str(job_id),
-        "logs": [
-            PromptLogSummary(
-                id=item.id,
-                task_id=item.task_id,
-                provider=item.provider,
-                model=item.model,
-                created_at=item.created_at,
-            ).model_dump()
-            for item in logs
-        ],
-    }
-
-
-@router.get("/api/files/{file_id}/download")
-def download_file(file_id: UUID, db: Session = Depends(get_db)) -> FileResponse:
-    file_row = db.get(FileModel, file_id)
-    if not file_row:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    file_path = Path(file_row.stored_path)
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Stored file not found")
-
-    return FileResponse(
-        path=str(file_path),
-        media_type=file_row.mime_type,
-        filename=file_row.original_name,
-    )
-
-
-@router.get("/api/ops/dead-letters", response_model=DeadLetterListResponse)
-def list_dead_letters(
-    limit: int = 20,
-    db: Session = Depends(get_db),
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_ops_key_id: str | None = Header(default=None, alias="X-Ops-Key-Id"),
-    x_ops_key_secret: str | None = Header(
-        default=None, alias="X-Ops-Key-Secret"),
-) -> DeadLetterListResponse:
-    _authorize_ops_request(db, x_ops_token, x_ops_key_id, x_ops_key_secret)
-
-    dead_letter_dir = Path(settings.dead_letter_dir)
-    if not dead_letter_dir.exists():
-        return DeadLetterListResponse(items=[])
-
-    files = sorted(dead_letter_dir.glob("job_*.json"), reverse=True)
-    items: list[DeadLetterItem] = []
-    safe_limit = max(1, min(limit, 200))
-
-    for file_path in files[:safe_limit]:
-        try:
-            payload = json.loads(file_path.read_text(encoding="utf-8"))
-            items.append(
-                DeadLetterItem(
-                    file_name=file_path.name,
-                    path=str(file_path),
-                    job_id=str(payload.get("job_id", "")),
-                    reason=str(payload.get("reason", "")),
-                    retries=int(payload.get("retries", 0)),
-                    created_at=str(payload.get("created_at", "")),
-                )
-            )
-        except Exception:
-            continue
-
-    return DeadLetterListResponse(items=items)
-
-
-@router.post("/api/ops/dead-letters/replay", response_model=DeadLetterReplayResponse)
-def replay_dead_letter(
-    payload: DeadLetterReplayRequest,
-    db: Session = Depends(get_db),
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_ops_key_id: str | None = Header(default=None, alias="X-Ops-Key-Id"),
-    x_ops_key_secret: str | None = Header(
-        default=None, alias="X-Ops-Key-Secret"),
-) -> DeadLetterReplayResponse:
-    actor = _authorize_ops_request(
-        db, x_ops_token, x_ops_key_id, x_ops_key_secret)
-
-    # Prevent path traversal by accepting only plain filenames.
-    file_name = Path(payload.file_name).name
-    file_path = Path(settings.dead_letter_dir) / file_name
-
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=404, detail="Dead letter file not found")
-
-    data = json.loads(file_path.read_text(encoding="utf-8"))
-    job_id = str(data.get("job_id", ""))
-    replay_marker = _replay_marker_path(file_name)
-    replayed_before = replay_marker.exists()
-
-    if not payload.requeue:
-        preview_message = "Set requeue=true to replay this dead-letter job."
-        if replayed_before:
-            preview_message = "This dead-letter file was already replayed once. Set force_requeue=true to replay again."
-
-        _append_replay_audit(
-            action="preview",
-            file_name=file_name,
-            job_id=job_id,
-            actor=actor,
-            result="ok",
-        )
-        return DeadLetterReplayResponse(
-            file_name=file_name,
-            job_id=job_id,
-            requeued=False,
-            deleted=False,
-            status="PREVIEW",
-            message=preview_message,
-        )
-
-    if replayed_before and not payload.force_requeue:
-        _append_replay_audit(
-            action="requeue",
-            file_name=file_name,
-            job_id=job_id,
-            actor=actor,
-            result="blocked_duplicate",
-        )
-        raise HTTPException(
-            status_code=409,
-            detail="Dead letter already replayed; set force_requeue=true to override",
-        )
-
-    try:
-        job_uuid = UUID(job_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=400, detail="Invalid job_id in dead letter") from exc
-
-    job = db.get(JobModel, job_uuid)
-    if not job:
-        raise HTTPException(status_code=404, detail="Target job not found")
-
-    job.status = JobStatus.QUEUED
-    job.updated_at = now_utc()
-    db.add(job)
-    db.commit()
-
-    dispatch_job(job_uuid)
-    db.refresh(job)
-
-    replay_marker.parent.mkdir(parents=True, exist_ok=True)
-    replay_marker.write_text(
-        json.dumps(
-            {
-                "file_name": file_name,
-                "job_id": job_id,
-                "replayed_at": now_utc().isoformat(),
-                "actor": actor,
-            },
-            ensure_ascii=True,
-        ),
-        encoding="utf-8",
-    )
-
-    _append_replay_audit(
-        action="requeue",
-        file_name=file_name,
-        job_id=job_id,
-        actor=actor,
-        result="dispatched",
-    )
-
-    deleted = False
-    if payload.delete_on_success:
-        file_path.unlink(missing_ok=True)
-        deleted = True
-
-    return DeadLetterReplayResponse(
-        file_name=file_name,
-        job_id=job_id,
-        requeued=True,
-        deleted=deleted,
-        status=job.status,
-        message="Dead-letter replay dispatched.",
-    )
-
-
-@router.post("/api/ops/api-keys", response_model=CreateOpsApiKeyResponse)
-def create_ops_api_key(
-    payload: CreateOpsApiKeyRequest,
-    db: Session = Depends(get_db),
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_ops_key_id: str | None = Header(default=None, alias="X-Ops-Key-Id"),
-    x_ops_key_secret: str | None = Header(
-        default=None, alias="X-Ops-Key-Secret"),
-) -> CreateOpsApiKeyResponse:
-    from app.models import OpsApiKeyModel
-
-    actor = _authorize_ops_request(
-        db, x_ops_token, x_ops_key_id, x_ops_key_secret)
-    if actor == "anonymous":
-        raise HTTPException(
-            status_code=403,
-            detail="Configure OPS_API_TOKEN first to bootstrap API keys",
-        )
-
-    existing = db.execute(
-        select(OpsApiKeyModel).where(OpsApiKeyModel.key_id == payload.key_id)
-    ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=409, detail="key_id already exists")
-
-    row = OpsApiKeyModel(
-        key_id=payload.key_id,
-        secret_hash=_secret_hash(payload.key_secret),
-        role=payload.role,
-        is_active=True,
-    )
-    db.add(row)
-    db.commit()
-
-    return CreateOpsApiKeyResponse(
-        key_id=row.key_id,
-        role=row.role,
-        is_active=row.is_active,
-    )
-
-
-@router.get("/api/ops/replay-audit", response_model=ReplayAuditListResponse)
-def list_replay_audit(
-    limit: int = 50,
-    db: Session = Depends(get_db),
-    x_ops_token: str | None = Header(default=None, alias="X-Ops-Token"),
-    x_ops_key_id: str | None = Header(default=None, alias="X-Ops-Key-Id"),
-    x_ops_key_secret: str | None = Header(
-        default=None, alias="X-Ops-Key-Secret"),
-) -> ReplayAuditListResponse:
-    _authorize_ops_request(db, x_ops_token, x_ops_key_id, x_ops_key_secret)
-
-    audit_path = Path(settings.dead_letter_dir) / "replay_audit.jsonl"
-    if not audit_path.exists():
-        return ReplayAuditListResponse(items=[])
-
-    safe_limit = max(1, min(limit, 500))
-    lines = audit_path.read_text(encoding="utf-8").splitlines()
-    selected = lines[-safe_limit:]
-
-    items: list[ReplayAuditItem] = []
-    for line in reversed(selected):
-        try:
-            payload = json.loads(line)
-            items.append(
-                ReplayAuditItem(
-                    at=str(payload.get("at", "")),
-                    action=str(payload.get("action", "")),
-                    file_name=str(payload.get("file_name", "")),
-                    job_id=str(payload.get("job_id", "")),
-                    actor=str(payload.get("actor", "")),
-                    result=str(payload.get("result", "")),
-                )
-            )
-        except Exception:
-            continue
-
-    return ReplayAuditListResponse(items=items)
-
-
-# ── Telegram Webhook ──────────────────────────────────────────────────────────
-
-@router.post("/telegram/webhook", status_code=200)
-async def telegram_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    x_telegram_bot_api_secret_token: str | None = Header(default=None),
-):
-    """Receive Telegram webhook updates."""
-    secret = settings.telegram_webhook_secret
-    if secret and x_telegram_bot_api_secret_token != secret:
-        raise HTTPException(status_code=403, detail="Invalid webhook secret")
-
-    update = await request.json()
-    background_tasks.add_task(process_update, update, db)
-    return {"ok": True}
-
-
-@router.post("/telegram/setup-webhook", status_code=200)
-async def setup_telegram_webhook(
-    _: str = Depends(lambda: None),
-    db: Session = Depends(get_db),
-):
-    """Register the webhook URL with Telegram (call once after deploy)."""
-    from app.adapters.telegram.bot import bot as tg_bot
-    if not settings.telegram_webhook_url:
-        raise HTTPException(status_code=400, detail="TELEGRAM_WEBHOOK_URL not configured")
-    ok = await tg_bot.set_webhook(
-        settings.telegram_webhook_url,
-        settings.telegram_webhook_secret,
-    )
-    return {"ok": ok, "webhook_url": settings.telegram_webhook_url}
-
-
-# ── Conversations ─────────────────────────────────────────────────────────────
-
-@router.get("/conversations/{conversation_id}")
-def get_conversation(
-    conversation_id: UUID,
-    db: Session = Depends(get_db),
-):
-    svc = ConversationService(db)
-    conv = svc.get_conversation(conversation_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return serialize_conversation(conv)
-
-
-@router.get("/conversations/{conversation_id}/messages")
-def list_conversation_messages(
-    conversation_id: UUID,
-    limit: int = Query(default=50, ge=1, le=200),
-    db: Session = Depends(get_db),
-):
-    svc = ConversationService(db)
-    conv = svc.get_conversation(conversation_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = svc.list_messages(conversation_id, limit=limit)
-    return {"items": [serialize_message(m) for m in messages]}
-
-
-@router.get("/conversations/{conversation_id}/runs")
-def list_conversation_runs(
-    conversation_id: UUID,
-    db: Session = Depends(get_db),
-):
-    svc = ConversationService(db)
-    conv = svc.get_conversation(conversation_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    runs = svc.list_agent_runs(conversation_id)
-    return {"items": [serialize_agent_run(r) for r in runs]}
-
-
-@router.post("/conversations/{conversation_id}/stop", status_code=200)
-def stop_conversation(
-    conversation_id: UUID,
-    db: Session = Depends(get_db),
-):
-    svc = ConversationService(db)
-    conv = svc.get_conversation(conversation_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    svc.update_conversation_status(conversation_id, "idle")
-    db.commit()
-    return {"ok": True, "status": "idle"}
-
-
-class _WebDispatcher:
-    """Dispatcher adapter that persists rendered agent turns without Telegram send."""
-
-    def __init__(self, base_dispatcher):
-        self._base = base_dispatcher
-        self._registry = base_dispatcher._registry
-
-    def resolve_identity(self, role: str) -> str:
-        return self._base.resolve_identity(role)
-
-    async def dispatch(
-        self,
-        role: str,
-        chat_id: str | int,
-        body: str,
-        next_role: str | None = None,
-        include_handoff_hint: bool = True,
-        reply_to_message_id: int | None = None,
-        message_thread_id: int | None = None,
-    ) -> DispatchResult:
-        rendered = self._base.build_message(
-            role,
-            body,
-            next_role,
-            include_handoff_hint=include_handoff_hint,
-        )
-        return DispatchResult(
-            identity=self.resolve_identity(role),
-            telegram_message_id=None,
-            rendered_text=rendered,
-        )
-
-    async def dispatch_status(
-        self,
-        identity: str,
-        chat_id: str | int,
-        text: str,
-        message_thread_id: int | None = None,
-    ) -> int | None:
-        return None
 
 
 @router.get("/web/chats")
@@ -1680,7 +755,7 @@ async def create_web_team_task(
     )
 
     if _task_is_ready(team_svc, run.id, task.id, db):
-        team_svc.update_run(run.id, status="active")
+        team_svc.update_run(run.id, status="queued")
         db.commit()
         background_tasks.add_task(_bg_run_scheduler, run.id)
     else:
@@ -1860,7 +935,7 @@ async def send_web_team_run_request(
                 else f"사용자 후속 요청: {text}"
             ),
         )
-        team_svc.update_run(run.id, status="active", plan_status="approved")
+        team_svc.update_run(run.id, status="queued", plan_status="approved")
         db.commit()
         background_tasks.add_task(_bg_run_scheduler, run.id)
         return _build_team_board_snapshot(db, run)
@@ -1974,7 +1049,7 @@ async def send_web_team_run_request(
         db.refresh(run)
         return _build_team_board_snapshot(db, run)
 
-    team_svc.update_run(run.id, status="active", plan_status="approved")
+    team_svc.update_run(run.id, status="queued", plan_status="approved")
     team_svc.create_activity(
         team_run_id=run.id,
         event_type="plan_approved",
@@ -2001,7 +1076,7 @@ async def approve_web_team_run_plan(
     if run.plan_status not in {"awaiting_approval", "pending"}:
         raise HTTPException(status_code=400, detail="plan is not awaiting approval")
     actor_handle = str(payload.get("actor_handle") or "manager").strip().lower() or "manager"
-    team_svc.update_run(run.id, plan_status="approved", status="active")
+    team_svc.update_run(run.id, plan_status="approved", status="queued")
     team_svc.create_activity(
         team_run_id=run.id,
         event_type="plan_approved",
@@ -3170,29 +2245,6 @@ def _task_execution_contract(
             "- 요청 해석, 작업 기준, 다음 단계가 명확히 드러나야 합니다.\n"
         )
     return shared
-
-
-def _required_workflow_agents(mode: str | None) -> list[str]:
-    normalized = (mode or "").strip().lower()
-    if normalized in {"autonomous", "autonomous-lite", "team-autonomous"}:
-        return ["planner", "writer", "critic", "qa", "manager"]
-    return ["planner"]
-
-
-def _normalize_web_selected_agents(
-    *,
-    selected: list[str] | None,
-    valid_handles: set[str],
-    mode: str | None,
-) -> list[str]:
-    normalized = [str(handle).strip().lower() for handle in (selected or []) if str(handle).strip()]
-    normalized = [handle for handle in normalized if handle in valid_handles]
-    for required in _required_workflow_agents(mode):
-        if required in valid_handles and required not in normalized:
-            normalized.append(required)
-    if not normalized:
-        return sorted(valid_handles)
-    return normalized
 
 
 def _default_session_specs(selected_agents: list[str]) -> list[dict]:
@@ -4872,6 +3924,9 @@ async def _run_team_scheduler(
         return None
     if run.plan_status != "approved":
         return run
+    # Accept queued or active as valid pre-run states
+    if run.status not in ("queued", "active", "running", "awaiting_review"):
+        return run
 
     team_svc.update_run(run.id, status="running")
     db.commit()
@@ -5037,7 +4092,10 @@ def _refresh_team_run_status(db: Session, team_svc: TeamRunService, team_run_id:
     elif review_waiting and not ready:
         team_svc.update_run(run.id, status="awaiting_review")
     else:
-        team_svc.update_run(run.id, status="active")
+        # Don't downgrade from running/queued to active unless tasks are genuinely idle
+        current = team_svc.get_run(run.id)
+        if current and current.status not in ("running", "queued"):
+            team_svc.update_run(run.id, status="active")
 
 
 def _coerce_optional_uuid(value: object | None) -> uuid.UUID | None:
@@ -5313,170 +4371,3 @@ def _build_progress_steps(
         )
 
     return steps[-12:]
-
-
-def _build_workspace_snapshot(db: Session, conv: conversation_models.ConversationModel) -> dict:
-    svc = ConversationService(db)
-    messages = svc.list_messages(conv.id, limit=200)
-    artifacts = list(reversed(svc.list_artifacts(conv.id, limit=30)))
-    return {
-        "conversation": serialize_conversation(conv),
-        "items": [serialize_message(m) for m in messages],
-        "progress_steps": _build_progress_steps(conv, messages),
-        "artifacts": [serialize_artifact(a) for a in artifacts],
-        "deliverable": _extract_web_deliverable(db, conv.id),
-    }
-
-
-@router.post("/web/chats", status_code=201)
-def create_web_chat(
-    payload: dict,
-    db: Session = Depends(get_db),
-):
-    title = str(payload.get("title") or "Web Team Chat").strip()[:120]
-    mode = str(payload.get("mode") or settings.orchestrator_default_mode).strip().lower()
-    valid = {a["handle"] for a in orchestrator.list_agents_info()}
-    raw_selected = payload.get("selected_agents")
-    if not isinstance(raw_selected, list):
-        raw_selected = ["planner", "writer", "critic", "manager"]
-    selected = _normalize_web_selected_agents(
-        selected=raw_selected,
-        valid_handles=valid,
-        mode=mode,
-    )
-
-    conv = conversation_models.ConversationModel(
-        platform="web",
-        chat_id=f"web:{uuid.uuid4().hex}",
-        topic_id=None,
-        title=title or "Web Team Chat",
-        mode=mode,
-        autonomy_level=mode,
-        selected_agents=selected,
-        status="idle",
-    )
-    db.add(conv)
-    db.commit()
-    db.refresh(conv)
-    return serialize_conversation(conv)
-
-
-@router.put("/web/chats/{conversation_id}/agents", status_code=200)
-def update_web_chat_agents(
-    conversation_id: UUID,
-    payload: dict,
-    db: Session = Depends(get_db),
-):
-    conv = db.get(conversation_models.ConversationModel, conversation_id)
-    if not conv or conv.platform != "web":
-        raise HTTPException(status_code=404, detail="Web conversation not found")
-
-    selected = payload.get("selected_agents")
-    if not isinstance(selected, list):
-        raise HTTPException(status_code=400, detail="selected_agents must be a list")
-    valid = {a["handle"] for a in orchestrator.list_agents_info()}
-    selected = _normalize_web_selected_agents(
-        selected=selected,
-        valid_handles=valid,
-        mode=conv.mode,
-    )
-
-    conv.selected_agents = selected
-    conv.updated_at = now_utc()
-    db.commit()
-    db.refresh(conv)
-    return {"ok": True, "conversation": serialize_conversation(conv)}
-
-
-@router.get("/web/chats/{conversation_id}/deliverable", status_code=200)
-def get_web_chat_deliverable(
-    conversation_id: UUID,
-    db: Session = Depends(get_db),
-):
-    conv = db.get(conversation_models.ConversationModel, conversation_id)
-    if not conv or conv.platform != "web":
-        raise HTTPException(status_code=404, detail="Web conversation not found")
-    return {"item": _extract_web_deliverable(db, conversation_id)}
-
-
-@router.get("/web/chats/{conversation_id}/workspace", status_code=200)
-def get_web_chat_workspace(
-    conversation_id: UUID,
-    db: Session = Depends(get_db),
-):
-    conv = db.get(conversation_models.ConversationModel, conversation_id)
-    if not conv or conv.platform != "web":
-        raise HTTPException(status_code=404, detail="Web conversation not found")
-    return _build_workspace_snapshot(db, conv)
-
-
-@router.post("/web/chats/{conversation_id}/messages", status_code=202)
-async def send_web_chat_message(
-    conversation_id: UUID,
-    payload: dict,
-    db: Session = Depends(get_db),
-):
-    text = str(payload.get("text") or "").strip()
-    sender_name = str(payload.get("sender_name") or "web_user").strip() or "web_user"
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-
-    conv = db.get(conversation_models.ConversationModel, conversation_id)
-    if not conv or conv.platform != "web":
-        raise HTTPException(status_code=404, detail="Web conversation not found")
-
-    valid = {a["handle"] for a in orchestrator.list_agents_info()}
-    normalized_selected = _normalize_web_selected_agents(
-        selected=list(conv.selected_agents or []),
-        valid_handles=valid,
-        mode=conv.mode,
-    )
-    if normalized_selected != list(conv.selected_agents or []):
-        conv.selected_agents = normalized_selected
-
-    conv.title = conv.title or text[:100]
-    db.commit()
-
-    base_dispatcher = orchestrator._get_dispatcher()
-    web_dispatcher = _WebDispatcher(base_dispatcher)
-    await orchestrator.process_message(
-        db=db,
-        chat_id=conv.chat_id,
-        text=text,
-        sender_name=sender_name,
-        telegram_message_id=None,
-        send_fn=None,
-        topic_id=conv.topic_id,
-        inbound_identity="pm",
-        chat_type="web",
-        dispatcher_override=web_dispatcher,
-        available_handles=list(conv.selected_agents or []),
-    )
-
-    refreshed = (
-        db.query(conversation_models.ConversationModel)
-        .filter(
-            conversation_models.ConversationModel.chat_id == conv.chat_id,
-            conversation_models.ConversationModel.platform == "web",
-        )
-        .order_by(conversation_models.ConversationModel.updated_at.desc())
-        .first()
-    )
-    if not refreshed:
-        raise HTTPException(status_code=500, detail="Failed to refresh conversation")
-    return _build_workspace_snapshot(db, refreshed)
-
-
-# ── Agents ────────────────────────────────────────────────────────────────────
-
-@router.get("/agents")
-def list_agents():
-    """List all configured agents."""
-    return {"agents": orchestrator.list_agents_info()}
-
-
-@router.post("/agents/reload-config", status_code=200)
-def reload_agent_config():
-    """Hot-reload agents.yaml without restart."""
-    orchestrator.reload_agents()
-    return {"ok": True, "agents": orchestrator.list_agents_info()}

@@ -15,6 +15,7 @@ import {
   deleteTeamRun,
   listKnowledgeFiles,
   getFileChunks,
+  deleteKnowledgeFile,
 } from "./api";
 import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
 
@@ -216,9 +217,10 @@ export default function App() {
   const [board, setBoard] = useState<TeamBoardSnapshot | null>(null);
   const [agentHandles, setAgentHandles] = useState<string[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
-  const [outputType, setOutputType] = useState<OutputType>("pptx");
   const [oversightMode, setOversightMode] = useState<OversightMode>("auto");
   const [presetRounds, setPresetRounds] = useState<number>(4);
+  // composerOutputType: per-request output format (shown in composer, not workspace creation)
+  const [composerOutputType, setComposerOutputType] = useState<OutputType>("pptx");
   const [files, setFiles] = useState<FileUploadItem[]>([]);
   const [composerText, setComposerText] = useState("");
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -238,7 +240,8 @@ export default function App() {
   // TASK_05 - Knowledge & RAG UI state
   const [knowledgeFiles, setKnowledgeFiles] = useState<KnowledgeFile[]>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
-  const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
+  const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(true);
+  const [isKnowledgeDrawerOpen, setIsKnowledgeDrawerOpen] = useState(false);
   const [expandedFileId, setExpandedFileId] = useState<string | null>(null);
   const [fileChunks, setFileChunks] = useState<Record<string, ChunkItem[]>>({});
   const [referenceMode, setReferenceMode] = useState<ReferenceMode>("auto");
@@ -286,7 +289,19 @@ export default function App() {
   useEffect(() => {
     const agents = board?.run?.selected_agents ?? [];
     setSelectedAgents(agents);
-  }, [board?.run?.id, board?.run?.selected_agents]);
+    // Sync output type from workspace when switching boards
+    if (board?.run?.output_type) {
+      setComposerOutputType(board.run.output_type as OutputType);
+    }
+    // Sync sidebar title/status from latest board poll
+    if (board?.run) {
+      setRuns((prev) => prev.map((r) =>
+        r.id === board.run.id
+          ? { ...r, title: board.run.title || r.title, status: board.run.status }
+          : r,
+      ));
+    }
+  }, [board?.run?.id, board?.run?.selected_agents, board?.run?.status, board?.run?.title]);
 
   async function refreshAgents() {
     try {
@@ -336,10 +351,23 @@ export default function App() {
     }
   }
 
+  async function handleDeleteKnowledgeFile(fileId: string) {
+    if (!window.confirm("이 파일을 지식 라이브러리에서 삭제하시겠습니까?")) return;
+    try {
+      await deleteKnowledgeFile(fileId);
+      setKnowledgeFiles((prev) => prev.filter((f) => f.id !== fileId));
+      setSelectedKnowledgeIds((prev) => prev.filter((id) => id !== fileId));
+      if (expandedFileId === fileId) setExpandedFileId(null);
+    } catch {
+      setError("파일 삭제 실패");
+    }
+  }
+
   async function handleCreateRun() {
     setLoadingRuns(true);
     try {
-      const snapshot = await createTeamRun({ requestedBy: "USER", oversightMode, outputType, autoReviewMaxRounds: presetRounds });
+      // output_type is now set per-request in the composer; workspace creation uses backend default
+      const snapshot = await createTeamRun({ requestedBy: "USER", oversightMode, outputType: composerOutputType, autoReviewMaxRounds: presetRounds });
       setBoard(snapshot);
       setActiveRunId(snapshot.run.id);
       void refreshRuns();
@@ -367,6 +395,10 @@ export default function App() {
     if (e) e.preventDefault();
     if (!activeRunId || !composerText.trim() || sendingRequest) return;
     setSendingRequest(true);
+    // Optimistic: mark the run as queued in sidebar immediately
+    setRuns((prev) => prev.map((r) =>
+      r.id === activeRunId ? { ...r, status: "queued" } : r,
+    ));
     try {
       const sourceIds = referenceMode === "selected"
         ? selectedKnowledgeIds
@@ -375,7 +407,7 @@ export default function App() {
           : files.map((item) => item.id);
       const snapshot = await sendRequest(activeRunId, {
         text: composerText.trim(), senderName: "USER",
-        outputType, autoReviewMaxRounds: presetRounds,
+        outputType: composerOutputType, autoReviewMaxRounds: presetRounds,
         sourceFileIds: sourceIds,
         referenceMode,
         styleMode,
@@ -384,8 +416,20 @@ export default function App() {
       setBoard(snapshot);
       setComposerText("");
       setFiles([]);
+      // Sync sidebar title and status immediately from response
+      setRuns((prev) => prev.map((r) =>
+        r.id === activeRunId
+          ? { ...r, title: snapshot.run.title || r.title, status: snapshot.run.status }
+          : r,
+      ));
+      // Full refresh to catch any server-side changes
+      void refreshRuns();
     } catch {
       setError("메시지 전송 실패");
+      // Revert optimistic update on failure
+      setRuns((prev) => prev.map((r) =>
+        r.id === activeRunId ? { ...r, status: "idle" } : r,
+      ));
     } finally {
       setSendingRequest(false);
     }
@@ -524,7 +568,8 @@ export default function App() {
 
   const runStatus        = board?.run?.status      || "idle";
   const runPlanStatus    = board?.run?.plan_status  || "pending";
-  const currentOutputType = board?.run?.output_type || outputType;
+  const currentOutputType = (board?.run?.output_type || composerOutputType) as OutputType;
+  const isRunActive = ["queued", "running", "active", "planning"].includes(runStatus);
 
   // ── Render ─────────────────────────────────────────────────────
   return (
@@ -552,14 +597,6 @@ export default function App() {
                 <select value={oversightMode} onChange={(e) => setOversightMode(e.target.value as OversightMode)}>
                   <option value="auto">자동 (Auto)</option>
                   <option value="manual">수동 (Manual)</option>
-                </select>
-              </div>
-              <div className="config-field">
-                <label>산출물 형식</label>
-                <select value={outputType} onChange={(e) => setOutputType(e.target.value as OutputType)}>
-                  <option value="pptx">PPTX 슬라이드</option>
-                  <option value="docx">DOCX 문서</option>
-                  <option value="xlsx">XLSX 데이터</option>
                 </select>
               </div>
               <div className="config-field">
@@ -607,18 +644,30 @@ export default function App() {
           <div className="nav-group">
             <h2 className="nav-label">
               지식 라이브러리
-              <button
-                className="icon-btn"
-                onClick={() => { setIsKnowledgeOpen(!isKnowledgeOpen); if (!isKnowledgeOpen) void refreshKnowledge(); }}
-                title="새로고침"
-              >
-                {knowledgeLoading ? "⟳" : "📚"}
-              </button>
+              <div className="nav-label-actions">
+                <label className="icon-btn upload-icon-btn" title="파일 업로드">
+                  <input type="file" multiple style={{ display: "none" }} onChange={handleUpload} />
+                  ＋
+                </label>
+                <button
+                  className="icon-btn"
+                  onClick={() => { setIsKnowledgeOpen(!isKnowledgeOpen); if (!isKnowledgeOpen) void refreshKnowledge(); }}
+                  title={isKnowledgeOpen ? "접기" : "펼치기"}
+                >
+                  {knowledgeLoading ? "⟳" : isKnowledgeOpen ? "▲" : "▼"}
+                </button>
+              </div>
             </h2>
             {isKnowledgeOpen && (
               <div className="knowledge-list">
                 {knowledgeFiles.length === 0 ? (
-                  <p className="empty-notice">업로드된 파일 없음</p>
+                  <div className="knowledge-empty-state">
+                    <p className="empty-notice">업로드된 파일 없음</p>
+                    <label className="knowledge-upload-cta">
+                      <input type="file" multiple style={{ display: "none" }} onChange={handleUpload} />
+                      📎 파일 업로드
+                    </label>
+                  </div>
                 ) : (
                   knowledgeFiles.map((kf) => (
                     <div key={kf.id} className={`knowledge-card ${selectedKnowledgeIds.includes(kf.id) ? "selected" : ""}`}>
@@ -639,6 +688,13 @@ export default function App() {
                           title="근거 문단 보기"
                         >
                           {expandedFileId === kf.id ? "▲" : "▼"}
+                        </button>
+                        <button
+                          className="icon-btn sm danger"
+                          onClick={(e) => { e.stopPropagation(); void handleDeleteKnowledgeFile(kf.id); }}
+                          title="삭제"
+                        >
+                          ✕
                         </button>
                       </div>
                       {expandedFileId === kf.id && (
@@ -744,8 +800,15 @@ export default function App() {
           <div className="header-controls">
             <div className="status-pill-group">
               <span className={`status-pill ${runStatus}`}>
-                {runStatus === "running" && <span className="pill-dot" />}
-                {runStatus.toUpperCase()}
+                {(runStatus === "running" || runStatus === "queued") && <span className="pill-dot" />}
+                {runStatus === "queued" ? "⏳ 대기 중" :
+                 runStatus === "running" ? "▶ 실행 중" :
+                 runStatus === "planning" ? "📋 기획 중" :
+                 runStatus === "active" ? "🔄 처리 중" :
+                 runStatus === "done" ? "✓ 완료" :
+                 runStatus === "blocked" ? "⛔ 차단됨" :
+                 runStatus === "awaiting_review" ? "👁 검토 대기" :
+                 runStatus.toUpperCase()}
               </span>
               <span className={`status-pill ${runPlanStatus}`}>
                 📋 {statusLabel(runPlanStatus)}
@@ -755,6 +818,9 @@ export default function App() {
               </span>
             </div>
             <div className="button-row">
+              <button className="control-button knowledge-btn" onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}>
+                📚 지식 라이브러리 {knowledgeFiles.length > 0 && <span className="kb-count-badge">{knowledgeFiles.length}</span>}
+              </button>
               <button className="control-button" onClick={() => setIsFilesModalOpen(true)}>
                 📎 파일 {files.length > 0 && `(${files.length})`}
               </button>
@@ -794,9 +860,16 @@ export default function App() {
                   <header className="panel-top">
                     <h3>최종 결과물</h3>
                     <div className="export-tools">
-                      <button onClick={() => handleExport("pptx")} disabled={!board.deliverable || currentOutputType !== "pptx"}>PPTX</button>
-                      <button onClick={() => handleExport("docx")} disabled={!board.deliverable || currentOutputType !== "docx"}>DOCX</button>
-                      <button onClick={() => handleExport("xlsx")} disabled={!board.deliverable || currentOutputType !== "xlsx"}>XLSX</button>
+                      {(["pptx","docx","xlsx","txt","md"] as OutputType[]).map((fmt) => (
+                        <button
+                          key={fmt}
+                          onClick={() => handleExport(fmt)}
+                          disabled={!board.deliverable || currentOutputType !== fmt}
+                          className={currentOutputType === fmt ? "export-btn-active" : ""}
+                        >
+                          {fmt.toUpperCase()}
+                        </button>
+                      ))}
                     </div>
                   </header>
                   <div className="panel-body deliverable-view">
@@ -811,18 +884,27 @@ export default function App() {
                     }
                   </div>
 
-                  {/* RAG Sources Panel */}
-                  {board?.source_files && board.source_files.length > 0 && (
-                    <div className="rag-sources-panel">
-                      <header className="sources-header">
-                        <span className="sources-title">📎 참고 자료</span>
-                        {board.run?.rag_config?.reference_mode && (
+                  {/* RAG Sources Panel - always visible */}
+                  <div className="rag-sources-panel">
+                    <header className="sources-header">
+                      <span className="sources-title">📎 참고 자료</span>
+                      <div className="sources-header-right">
+                        {board?.run?.rag_config?.reference_mode && (
                           <span className="rag-mode-badge">
                             {board.run.rag_config.reference_mode === "auto" ? "자동" :
                              board.run.rag_config.reference_mode === "all" ? "전체" : "선택"}
                           </span>
                         )}
-                      </header>
+                        <button
+                          className="icon-btn sm"
+                          onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
+                          title="지식 라이브러리 열기"
+                        >
+                          📚
+                        </button>
+                      </div>
+                    </header>
+                    {board?.source_files && board.source_files.length > 0 ? (
                       <div className="sources-list">
                         {board.source_files.map((sf) => (
                           <div key={sf.id} className="source-chip">
@@ -836,15 +918,25 @@ export default function App() {
                           </div>
                         ))}
                       </div>
-                      {board.run?.rag_config?.style_mode && board.run.rag_config.style_mode !== "default" && (
-                        <div className="style-badge-row">
-                          <span className="style-badge">
-                            문체: {board.run.rag_config.style_mode} · {board.run.rag_config.style_strength ?? "medium"}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    ) : (
+                      <div className="sources-empty">
+                        <span>이 요청에 사용된 참고 자료가 없습니다.</span>
+                        <button
+                          className="sources-empty-btn"
+                          onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
+                        >
+                          라이브러리 관리 →
+                        </button>
+                      </div>
+                    )}
+                    {board?.run?.rag_config?.style_mode && board.run.rag_config.style_mode !== "default" && (
+                      <div className="style-badge-row">
+                        <span className="style-badge">
+                          문체: {board.run.rag_config.style_mode} · {board.run.rag_config.style_strength ?? "medium"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </section>
 
                 {/* Kanban */}
@@ -954,6 +1046,57 @@ export default function App() {
         {/* Footer composer */}
         <footer className="workspace-footer">
           <div className="composer-wrap">
+            {/* Running status guard banner */}
+            {isRunActive && (
+              <div className="composer-running-banner">
+                <span className="running-banner-dot" />
+                <span>
+                  {runStatus === "queued" ? "⏳ 요청이 대기열에 등록되었습니다…" :
+                   runStatus === "running" ? "▶ AI 팀이 작업 중입니다…" :
+                   runStatus === "planning" ? "📋 PM이 작업을 분석하고 있습니다…" :
+                   "🔄 처리 중…"}
+                </span>
+              </div>
+            )}
+            {/* Reference & Style mode indicator bar */}
+            <div className="composer-mode-bar">
+              <div className="mode-indicators">
+                {/* Output format selector (per-request) */}
+                <span className="mode-chip output-type-chip" title="산출물 형식">
+                  📄
+                  <select
+                    className="output-type-select"
+                    value={composerOutputType}
+                    onChange={(e) => setComposerOutputType(e.target.value as OutputType)}
+                    title="산출물 형식 선택"
+                  >
+                    <option value="pptx">PPTX 슬라이드</option>
+                    <option value="docx">DOCX 문서</option>
+                    <option value="xlsx">XLSX 데이터</option>
+                    <option value="txt">TXT 텍스트</option>
+                    <option value="md">MD 마크다운</option>
+                  </select>
+                </span>
+                <span className="mode-chip" title="참고 모드">
+                  🔖 {referenceMode === "auto" ? "자동 참고" : referenceMode === "all" ? "전체 라이브러리" : `선택 참고 (${selectedKnowledgeIds.length}개)`}
+                </span>
+                <span className="mode-chip" title="문체 모드">
+                  ✒️ {styleMode === "default" ? "기본 문체" : `${styleMode} · ${styleStrength}`}
+                </span>
+                {knowledgeFiles.length > 0 && (
+                  <span className="mode-chip kb-chip" title="지식 라이브러리">
+                    📚 {knowledgeFiles.length}개 파일
+                  </span>
+                )}
+              </div>
+              <button
+                className="mode-settings-btn"
+                onClick={() => { setIsKnowledgeDrawerOpen(true); void refreshKnowledge(); }}
+                title="지식 라이브러리 및 참고 설정"
+              >
+                ⚙️ 라이브러리 설정
+              </button>
+            </div>
             {files.length > 0 && (
               <div className="file-pills">
                 {files.map((f) => (
@@ -1097,6 +1240,187 @@ export default function App() {
                 </form>
               </section>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Knowledge Library Drawer ── */}
+      {isKnowledgeDrawerOpen && (
+        <div className="knowledge-drawer-container">
+          <div className="panel-overlay" onClick={() => setIsKnowledgeDrawerOpen(false)} />
+          <div className="knowledge-drawer">
+            <header className="knowledge-drawer-header">
+              <div className="knowledge-drawer-title">
+                <span className="drawer-icon">📚</span>
+                <h2>지식 라이브러리</h2>
+                {knowledgeLoading && <span className="loading-spin">⟳</span>}
+              </div>
+              <div className="knowledge-drawer-actions">
+                <button className="icon-btn" onClick={() => void refreshKnowledge()} title="새로고침">⟳</button>
+                <button className="panel-close" onClick={() => setIsKnowledgeDrawerOpen(false)}>✕</button>
+              </div>
+            </header>
+
+            <div className="knowledge-drawer-body scrollable">
+              {/* Upload area */}
+              <section className="kd-section">
+                <h3 className="kd-section-title">문서 업로드</h3>
+                <label className="kd-upload-zone">
+                  <input type="file" multiple style={{ display: "none" }} onChange={(e) => { handleUpload(e); }} />
+                  <div className="kd-upload-icon">📂</div>
+                  <p className="kd-upload-label">파일을 클릭하거나 드래그하여 업로드</p>
+                  <p className="kd-upload-hint">PDF, DOCX, TXT, XLSX 등 지원</p>
+                </label>
+              </section>
+
+              {/* Reference & Style settings */}
+              <section className="kd-section">
+                <h3 className="kd-section-title">참고·문체 설정</h3>
+                <div className="kd-config-grid">
+                  <div className="kd-config-item">
+                    <label>참고 모드</label>
+                    <select value={referenceMode} onChange={(e) => setReferenceMode(e.target.value as ReferenceMode)}>
+                      <option value="auto">자동 추천</option>
+                      <option value="all">전체 라이브러리</option>
+                      <option value="selected">선택한 자료만</option>
+                    </select>
+                    <span className="kd-config-hint">
+                      {referenceMode === "auto" && "AI가 관련 자료를 자동으로 선택합니다"}
+                      {referenceMode === "all" && "라이브러리의 모든 파일을 참고합니다"}
+                      {referenceMode === "selected" && `체크된 ${selectedKnowledgeIds.length}개 파일만 참고합니다`}
+                    </span>
+                  </div>
+                  <div className="kd-config-item">
+                    <label>문체 모드</label>
+                    <select value={styleMode} onChange={(e) => setStyleMode(e.target.value as StyleMode)}>
+                      <option value="default">기본</option>
+                      <option value="formal">격식체</option>
+                      <option value="concise">간결체</option>
+                      <option value="friendly">친근체</option>
+                    </select>
+                  </div>
+                  {styleMode !== "default" && (
+                    <div className="kd-config-item">
+                      <label>문체 강도</label>
+                      <select value={styleStrength} onChange={(e) => setStyleStrength(e.target.value as StyleStrength)}>
+                        <option value="low">약하게</option>
+                        <option value="medium">보통</option>
+                        <option value="high">강하게</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* File list */}
+              <section className="kd-section">
+                <h3 className="kd-section-title">
+                  파일 목록
+                  <span className="kd-file-count">{knowledgeFiles.length}개</span>
+                </h3>
+                {knowledgeFiles.length === 0 ? (
+                  <div className="kd-empty-state">
+                    <div className="kd-empty-icon">📭</div>
+                    <p>업로드된 파일이 없습니다.</p>
+                    <p className="kd-empty-hint">위 업로드 영역에서 파일을 추가하세요.</p>
+                  </div>
+                ) : (
+                  <div className="kd-file-list">
+                    {/* Select all / deselect all */}
+                    {referenceMode === "selected" && (
+                      <div className="kd-select-bar">
+                        <button className="kd-select-all-btn" onClick={() => setSelectedKnowledgeIds(knowledgeFiles.map((f) => f.id))}>
+                          전체 선택
+                        </button>
+                        <button className="kd-select-all-btn" onClick={() => setSelectedKnowledgeIds([])}>
+                          전체 해제
+                        </button>
+                        <span className="kd-selected-count">{selectedKnowledgeIds.length}개 선택됨</span>
+                      </div>
+                    )}
+                    {knowledgeFiles.map((kf) => (
+                      <div key={kf.id} className={`kd-file-card ${selectedKnowledgeIds.includes(kf.id) ? "selected" : ""}`}>
+                        <div className="kd-file-row" onClick={() => {
+                          if (referenceMode !== "selected") return;
+                          const next = selectedKnowledgeIds.includes(kf.id)
+                            ? selectedKnowledgeIds.filter((id) => id !== kf.id)
+                            : [...selectedKnowledgeIds, kf.id];
+                          setSelectedKnowledgeIds(next);
+                        }}>
+                          {referenceMode === "selected" && (
+                            <input
+                              type="checkbox"
+                              className="kd-file-checkbox"
+                              checked={selectedKnowledgeIds.includes(kf.id)}
+                              onChange={() => {}}
+                            />
+                          )}
+                          <div className={`kd-status-badge ${kf.index_status}`}>
+                            {kf.index_status === "indexed" ? "✓ 인덱싱됨" :
+                             kf.index_status === "failed" ? "✗ 실패" : "○ 대기"}
+                          </div>
+                          <div className="kd-file-info">
+                            <span className="kd-file-name">{kf.original_name}</span>
+                            <div className="kd-file-meta">
+                              <span>{kf.chunk_count}개 청크</span>
+                              {kf.document_type && <span>· {kf.document_type}</span>}
+                              {kf.created_at && <span>· {new Date(kf.created_at).toLocaleDateString("ko-KR")}</span>}
+                            </div>
+                            {kf.document_summary && (
+                              <p className="kd-file-summary">{kf.document_summary}</p>
+                            )}
+                          </div>
+                          <div className="kd-file-actions">
+                            <button
+                              className="kd-action-btn"
+                              onClick={(e) => { e.stopPropagation(); void handleToggleChunks(kf.id); }}
+                              title="청크 미리보기"
+                            >
+                              {expandedFileId === kf.id ? "▲" : "▼"} 청크
+                            </button>
+                            <button
+                              className="kd-action-btn danger"
+                              onClick={(e) => { e.stopPropagation(); void handleDeleteKnowledgeFile(kf.id); }}
+                              title="삭제"
+                            >
+                              🗑️ 삭제
+                            </button>
+                          </div>
+                        </div>
+                        {/* Chunk preview */}
+                        {expandedFileId === kf.id && (
+                          <div className="kd-chunk-list">
+                            {(fileChunks[kf.id] ?? []).length === 0 ? (
+                              <p className="kd-chunk-empty">청크 없음</p>
+                            ) : (
+                              (fileChunks[kf.id] ?? []).map((chunk) => (
+                                <div key={chunk.id} className="kd-chunk-item">
+                                  <div className="kd-chunk-header">
+                                    <span className={`kd-chunk-status ${chunk.index_status}`}>
+                                      {chunk.index_status === "indexed" ? "✓" : chunk.index_status === "failed" ? "✗" : "○"}
+                                    </span>
+                                    <span className="kd-chunk-section">
+                                      {chunk.section || `청크 ${chunk.chunk_index + 1}`}
+                                    </span>
+                                  </div>
+                                  <p className="kd-chunk-text">{chunk.content}</p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <footer className="knowledge-drawer-footer">
+              <button className="action-button primary" onClick={() => setIsKnowledgeDrawerOpen(false)}>
+                설정 완료
+              </button>
+            </footer>
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-export type OutputType = "docx" | "xlsx" | "pptx";
+export type OutputType = "docx" | "xlsx" | "pptx" | "txt" | "md";
 export type OversightMode = "auto" | "manual";
 export type ReferenceMode = "auto" | "all" | "selected";
 export type StyleMode = "default" | "formal" | "concise" | "friendly";

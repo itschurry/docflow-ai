@@ -371,7 +371,7 @@ def _parse_artifact_update(value: Any) -> dict[str, Any] | None:
 
 def _role_contract_rules(handle: str) -> str:
     rules = {
-        "planner": "- planner는 작업 가능 상태가 되면 artifact_update.type을 brief 또는 decision으로 남기고 writer를 제안하세요\n",
+        "planner": "- planner는 반드시 Data Contract JSON을 포함한 Pipeline Contract를 brief로 출력하고 writer를 제안하세요\n",
         "writer": "- writer는 반드시 draft를 남기고 critic을 제안하세요\n",
         "critic": "- critic은 반드시 review_notes를 남기고 qa를 제안하세요\n",
         "qa": "- qa는 반드시 review_notes를 남기고 manager를 제안하세요\n",
@@ -427,7 +427,7 @@ def _fallback_status_message(handle: str, task_status: str | None) -> str:
     if status and status not in {"in_progress", "done"} and not _looks_like_json_blob(status):
         return status
     labels = {
-        "planner": "기획 리드가 작업 기준을 정리 중입니다.",
+        "planner": "Pipeline Architect가 파이프라인 계약을 수립 중입니다.",
         "writer": "작성 담당이 초안을 작성 중입니다.",
         "critic": "검토 담당이 검토 중입니다.",
         "qa": "품질 보증 담당이 최종 검증 중입니다.",

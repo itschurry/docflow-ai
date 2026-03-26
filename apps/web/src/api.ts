@@ -167,6 +167,10 @@ export function createTask(
   });
 }
 
+export async function deleteKnowledgeFile(fileId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/web/knowledge/${fileId}`, { method: "DELETE" });
+}
+
 export async function deleteTeamRun(runId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/web/team-runs/${runId}`, {
     method: "DELETE",
