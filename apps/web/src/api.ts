@@ -1,4 +1,4 @@
-import type { OutputType, OversightMode, TeamBoardSnapshot, TeamRun, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
+import type { OutputType, OversightMode, TeamBoardSnapshot, TeamRun, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength, JobDetail, JobStep } from "./types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -175,4 +175,12 @@ export async function deleteTeamRun(runId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/web/team-runs/${runId}`, {
     method: "DELETE",
   });
+}
+
+export function getJobDetail(jobId: string): Promise<JobDetail> {
+  return request<JobDetail>(`/api/jobs/${jobId}`);
+}
+
+export function getJobSteps(jobId: string): Promise<JobStep[]> {
+  return request<JobStep[]>(`/api/jobs/${jobId}/steps`);
 }

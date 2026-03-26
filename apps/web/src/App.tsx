@@ -1,4 +1,6 @@
-import { ChangeEvent, FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   approvePlan,
   createTask,
@@ -17,6 +19,7 @@ import {
   getFileChunks,
   deleteKnowledgeFile,
 } from "./api";
+import JobTimeline from "./JobTimeline";
 import type { FileUploadItem, OutputType, OversightMode, TeamBoardSnapshot, TeamTask, TeamRunSnapshot, KnowledgeFile, ChunkItem, ReferenceMode, StyleMode, StyleStrength } from "./types";
 
 const AUTO_REVIEW_PRESETS = [
@@ -71,144 +74,21 @@ function agentClass(handle?: string | null): string {
   return known.includes(handle) ? handle : "system";
 }
 
-function renderInlineMarkdown(text: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((https?:\/\/[^\s)]+)\))/g;
-  let lastIndex = 0;
-  let key = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith("`")) {
-      nodes.push(<code key={`inline-code-${key++}`}>{token.slice(1, -1)}</code>);
-    } else if (token.startsWith("**")) {
-      nodes.push(<strong key={`inline-strong-${key++}`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("[")) {
-      const labelMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
-      if (labelMatch) {
-        nodes.push(
-          <a key={`inline-link-${key++}`} href={labelMatch[2]} target="_blank" rel="noreferrer">
-            {labelMatch[1]}
-          </a>,
-        );
-      } else {
-        nodes.push(token);
-      }
-    } else {
-      nodes.push(token);
-    }
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
-}
-
 function MarkdownPreview({ content }: { content: string }) {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      i += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith("```")) {
-      const codeLines: string[] = [];
-      i += 1;
-      while (i < lines.length && !lines[i].trim().startsWith("```")) {
-        codeLines.push(lines[i]);
-        i += 1;
-      }
-      if (i < lines.length) i += 1;
-      blocks.push(
-        <pre key={`code-${i}`} className="md-code-block">
-          <code>{codeLines.join("\n")}</code>
-        </pre>,
-      );
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      const headingText = headingMatch[2];
-      const Tag = `h${Math.min(level, 6)}` as keyof JSX.IntrinsicElements;
-      blocks.push(<Tag key={`heading-${i}`}>{renderInlineMarkdown(headingText)}</Tag>);
-      i += 1;
-      continue;
-    }
-
-    if (/^>\s?/.test(trimmed)) {
-      const quoteLines: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
-        quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
-        i += 1;
-      }
-      blocks.push(<blockquote key={`quote-${i}`}>{renderInlineMarkdown(quoteLines.join(" "))}</blockquote>);
-      continue;
-    }
-
-    if (/^[-*+]\s+/.test(trimmed)) {
-      const items: string[] = [];
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^[-*+]\s+/, ""));
-        i += 1;
-      }
-      blocks.push(
-        <ul key={`ul-${i}`}>
-          {items.map((item, idx) => (
-            <li key={`ul-${i}-${idx}`}>{renderInlineMarkdown(item)}</li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^\d+\.\s+/, ""));
-        i += 1;
-      }
-      blocks.push(
-        <ol key={`ol-${i}`}>
-          {items.map((item, idx) => (
-            <li key={`ol-${i}-${idx}`}>{renderInlineMarkdown(item)}</li>
-          ))}
-        </ol>,
-      );
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !lines[i].trim().startsWith("```") &&
-      !/^#{1,6}\s+/.test(lines[i].trim()) &&
-      !/^>\s?/.test(lines[i].trim()) &&
-      !/^[-*+]\s+/.test(lines[i].trim()) &&
-      !/^\d+\.\s+/.test(lines[i].trim())
-    ) {
-      paragraphLines.push(lines[i].trim());
-      i += 1;
-    }
-    blocks.push(<p key={`p-${i}`}>{renderInlineMarkdown(paragraphLines.join(" "))}</p>);
-  }
-
-  return <div className="markdown-preview">{blocks}</div>;
+  return (
+    <div className="markdown-preview">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noreferrer">{children}</a>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export default function App() {
@@ -248,6 +128,11 @@ export default function App() {
   const [styleMode, setStyleMode] = useState<StyleMode>("default");
   const [styleStrength, setStyleStrength] = useState<StyleStrength>("medium");
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
+
+  // Job Monitor state
+  const [isJobMonitorOpen, setIsJobMonitorOpen] = useState(false);
+  const [monitorJobId, setMonitorJobId] = useState("");
+  const [activeMonitorJobId, setActiveMonitorJobId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -823,6 +708,9 @@ export default function App() {
               </button>
               <button className="control-button" onClick={() => setIsFilesModalOpen(true)}>
                 📎 파일 {files.length > 0 && `(${files.length})`}
+              </button>
+              <button className="control-button" onClick={() => setIsJobMonitorOpen(true)} title="Job 진행 상태 모니터링">
+                📊 Job 모니터
               </button>
               <button className="control-button primary" onClick={() => setIsPlanModalOpen(true)}>
                 계획 관리
@@ -1421,6 +1309,46 @@ export default function App() {
                 설정 완료
               </button>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {/* ── Job Monitor Modal ── */}
+      {isJobMonitorOpen && (
+        <div className="modal-overlay" onClick={() => setIsJobMonitorOpen(false)}>
+          <div className="modal-content job-monitor-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h3>📊 Job 모니터</h3>
+              <button className="panel-close" onClick={() => setIsJobMonitorOpen(false)}>✕</button>
+            </header>
+            <div className="job-monitor-input-row">
+              <input
+                className="job-id-input"
+                type="text"
+                placeholder="Job ID를 입력하세요 (UUID)"
+                value={monitorJobId}
+                onChange={(e) => setMonitorJobId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && monitorJobId.trim()) {
+                    setActiveMonitorJobId(monitorJobId.trim());
+                  }
+                }}
+              />
+              <button
+                className="action-button primary"
+                onClick={() => { if (monitorJobId.trim()) setActiveMonitorJobId(monitorJobId.trim()); }}
+                disabled={!monitorJobId.trim()}
+              >
+                조회
+              </button>
+            </div>
+            {activeMonitorJobId && (
+              <JobTimeline
+                key={activeMonitorJobId}
+                jobId={activeMonitorJobId}
+                onClose={() => setActiveMonitorJobId(null)}
+              />
+            )}
           </div>
         </div>
       )}

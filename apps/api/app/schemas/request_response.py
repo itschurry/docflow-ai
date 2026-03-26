@@ -36,9 +36,21 @@ class JobDetailResponse(BaseModel):
     job_type: str
     request_text: str
     status: str
+    progress: int = 0
     created_by: str
     created_at: datetime
     updated_at: datetime
+
+
+class AgentStepResponse(BaseModel):
+    id: UUID
+    job_id: UUID
+    step_name: str
+    status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    output: dict | None = None
+    error: str | None = None
 
 
 class UploadFileResponse(BaseModel):

@@ -5,6 +5,31 @@ export type StyleMode = "default" | "formal" | "concise" | "friendly";
 export type StyleStrength = "low" | "medium" | "high";
 export type IndexStatus = "indexed" | "failed" | "not_indexed";
 
+export type JobStepStatus = "pending" | "running" | "completed" | "failed";
+
+export interface JobStep {
+  id: string;
+  job_id: string;
+  step_name: string;
+  status: JobStepStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  output: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface JobDetail {
+  id: string;
+  project_id: string;
+  job_type: string;
+  request_text: string;
+  status: string;
+  progress: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RagConfig {
   reference_mode?: ReferenceMode;
   style_mode?: StyleMode;

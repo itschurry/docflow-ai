@@ -441,12 +441,22 @@ input, button, textarea, select {
 .markdown-preview h2 { font-size: 19px; }
 .markdown-preview h3 { font-size: 16px; }
 .markdown-preview p { margin: 0; }
+/* Lists */
 .markdown-preview ul,
 .markdown-preview ol {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 24px;
 }
+.markdown-preview ul { list-style: disc; }
+.markdown-preview ol { list-style: decimal; }
+.markdown-preview ul ul { list-style: circle; }
+.markdown-preview ul ul ul { list-style: square; }
+.markdown-preview li { margin: 3px 0; }
 .markdown-preview li + li { margin-top: 4px; }
+.markdown-preview li > ul,
+.markdown-preview li > ol { margin-top: 4px; }
+
+/* Inline code */
 .markdown-preview code {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -455,7 +465,9 @@ input, button, textarea, select {
   border-radius: var(--r-xs);
   padding: 1px 6px;
 }
-.markdown-preview .md-code-block {
+
+/* Code blocks */
+.markdown-preview pre {
   margin: 0;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
@@ -463,14 +475,17 @@ input, button, textarea, select {
   padding: 14px;
   overflow-x: auto;
 }
-.markdown-preview .md-code-block code {
+.markdown-preview pre code {
   border: none;
   background: transparent;
   padding: 0;
   display: block;
   white-space: pre;
   line-height: 1.6;
+  font-size: 12px;
 }
+
+/* Blockquote */
 .markdown-preview blockquote {
   margin: 0;
   border-left: 3px solid var(--brand);
@@ -479,6 +494,39 @@ input, button, textarea, select {
   background: var(--brand-soft);
   color: var(--text-2);
 }
+.markdown-preview blockquote > * + * { margin-top: 6px; }
+
+/* Tables */
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 13px;
+}
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid var(--border);
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-preview th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text);
+}
+.markdown-preview tr:nth-child(even) td {
+  background: var(--surface-1);
+}
+
+/* Horizontal rule */
+.markdown-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+/* Links */
 .markdown-preview a {
   color: var(--brand);
   text-decoration: underline;
@@ -1269,3 +1317,142 @@ input, button, textarea, select {
   font-weight: 700;
 }
 
+
+/* ── Job Monitor Modal ───────────────────────────────────────── */
+.job-monitor-modal {
+  width: 640px; max-width: 95vw; max-height: 85vh;
+  display: flex; flex-direction: column; gap: 0;
+  overflow: hidden;
+}
+.job-monitor-input-row {
+  display: flex; gap: 8px; padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.job-id-input {
+  flex: 1; background: var(--surface-raised); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 6px 10px; font-size: 12px;
+  color: var(--text); outline: none;
+}
+.job-id-input:focus { border-color: var(--brand); }
+
+/* ── JobTimeline component ───────────────────────────────────── */
+.job-timeline {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.job-timeline-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.job-timeline-title { display: flex; align-items: center; gap: 8px; }
+.job-type-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: var(--r-full); background: var(--surface-raised);
+  color: var(--text-muted); border: 1px solid var(--border);
+}
+.job-status-badge {
+  font-size: 11px; font-weight: 700; padding: 2px 8px;
+  border-radius: var(--r-full);
+}
+.job-status-queued     { background: #f3f4f6; color: #6b7280; }
+.job-status-running    { background: #dbeafe; color: #1d4ed8; }
+.job-status-review_required { background: #fef9c3; color: #a16207; }
+.job-status-completed  { background: #dcfce7; color: #15803d; }
+.job-status-failed     { background: #fee2e2; color: #b91c1c; }
+.job-status-cancelled  { background: #f3f4f6; color: #6b7280; }
+:root.dark .job-status-queued     { background: #374151; color: #9ca3af; }
+:root.dark .job-status-running    { background: #1e3a8a; color: #93c5fd; }
+:root.dark .job-status-review_required { background: #713f12; color: #fde68a; }
+:root.dark .job-status-completed  { background: #14532d; color: #86efac; }
+:root.dark .job-status-failed     { background: #7f1d1d; color: #fca5a5; }
+
+.job-timeline-request {
+  font-size: 12px; color: var(--text-muted); line-height: 1.5;
+  padding: 8px 10px; background: var(--surface-raised);
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+}
+.job-timeline-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; line-height: 1;
+}
+.job-timeline-loading, .job-timeline-error {
+  padding: 16px; text-align: center; font-size: 13px; color: var(--text-muted);
+}
+.job-timeline-error { color: var(--danger); }
+
+/* Progress bar */
+.job-progress-wrap {
+  position: relative; height: 18px;
+  background: var(--surface-raised); border-radius: var(--r-full);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.job-progress-bar {
+  height: 100%; transition: width 0.4s ease;
+  background: var(--brand);
+  border-radius: var(--r-full);
+}
+.job-progress-bar[data-status="failed"]           { background: var(--danger); }
+.job-progress-bar[data-status="completed"]        { background: var(--success, #22c55e); }
+.job-progress-bar[data-status="review_required"]  { background: #eab308; }
+.job-progress-label {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; font-weight: 700; color: var(--text);
+}
+
+/* Step list */
+.step-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.step-empty { font-size: 12px; color: var(--text-muted); padding: 8px; }
+
+.step-item {
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--surface-raised); overflow: hidden;
+}
+.step-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; cursor: pointer; user-select: none;
+}
+.step-row:hover { background: var(--surface-hover, rgba(0,0,0,.04)); }
+
+.step-index  { font-size: 10px; color: var(--text-muted); min-width: 16px; text-align: right; }
+.step-icon   { font-size: 13px; width: 16px; text-align: center; }
+.step-name   { flex: 1; font-size: 12px; font-weight: 500; color: var(--text); }
+.step-badge  { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: var(--r-full); }
+.step-elapsed  { font-size: 10px; color: var(--text-muted); font-family: monospace; }
+.step-expand-icon { font-size: 9px; color: var(--text-muted); }
+
+/* Step status colors */
+.step-pending  .step-icon   { color: #9ca3af; }
+.step-pending  .step-badge  { background: #f3f4f6; color: #6b7280; }
+.step-running  .step-icon   { color: #3b82f6; animation: pulse 1s ease-in-out infinite; }
+.step-running  .step-badge  { background: #dbeafe; color: #1d4ed8; }
+.step-running               { border-color: #93c5fd; }
+.step-completed .step-icon  { color: #22c55e; }
+.step-completed .step-badge { background: #dcfce7; color: #15803d; }
+.step-failed  .step-icon    { color: #ef4444; }
+.step-failed  .step-badge   { background: #fee2e2; color: #b91c1c; }
+.step-failed                { border-color: #fca5a5; }
+
+:root.dark .step-pending  .step-badge  { background: #374151; color: #9ca3af; }
+:root.dark .step-running  .step-badge  { background: #1e3a8a; color: #93c5fd; }
+:root.dark .step-completed .step-badge { background: #14532d; color: #86efac; }
+:root.dark .step-failed  .step-badge   { background: #7f1d1d; color: #fca5a5; }
+
+.step-detail {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.step-error {
+  font-size: 11px; color: var(--danger); margin-bottom: 6px;
+  padding: 4px 8px; background: #fee2e2; border-radius: var(--r-sm);
+}
+.step-output {
+  font-size: 10px; color: var(--text-muted); font-family: monospace;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  max-height: 160px; overflow-y: auto;
+  background: var(--surface-raised); padding: 6px 8px;
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+  margin: 0;
+}

@@ -32,6 +32,7 @@ class JobModel(Base):
     job_type: Mapped[str] = mapped_column(String(100), nullable=False)
     request_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_by: Mapped[str] = mapped_column(String(100), default="system")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_utc, nullable=False)

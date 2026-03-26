@@ -103,6 +103,7 @@ def execute_job(job_id: str) -> None:
             return
 
         job.status = JobStatus.RUNNING
+        job.progress = 0
         job.updated_at = now_utc()
         db.add(job)
         db.commit()
@@ -112,6 +113,8 @@ def execute_job(job_id: str) -> None:
                                     job_uuid).order_by(TaskModel.id)
         ).scalars().all())
 
+        total_tasks = len(tasks)
+        completed_count = 0
         pending_tasks = {task.id: task for task in tasks}
         completed_task_types: set[str] = set()
         ctx = ExecutionContext()
@@ -250,6 +253,10 @@ def execute_job(job_id: str) -> None:
                     task.status = "COMPLETED"
                     task.finished_at = now_utc()
                     db.add(task)
+                    completed_count += 1
+                    job.progress = int(completed_count / total_tasks * 100) if total_tasks else 100
+                    job.updated_at = now_utc()
+                    db.add(job)
                     db.commit()
                     completed_task_types.add(task.task_type)
                     pending_tasks.pop(task.id, None)
@@ -267,6 +274,7 @@ def execute_job(job_id: str) -> None:
                     return
 
         job.status = JobStatus.REVIEW_REQUIRED
+        job.progress = 100
         job.updated_at = now_utc()
         db.add(job)
         db.commit()

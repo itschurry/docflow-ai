@@ -1,3 +1,5 @@
+import asyncio
+import json
 import threading
 from uuid import UUID
 
@@ -13,6 +15,7 @@ from app.core.time_utils import now_utc
 from app.models import FileModel, JobModel, ProjectModel, PromptLogModel, TaskModel
 from app.schemas.plan import PlanResult
 from app.schemas.request_response import (
+    AgentStepResponse,
     ArtifactSummary,
     CreateJobRequest,
     CreateJobResponse,
@@ -100,10 +103,36 @@ def get_job(job_id: UUID, db: Session = Depends(get_db)) -> JobDetailResponse:
         job_type=job.job_type,
         request_text=job.request_text,
         status=job.status,
+        progress=job.progress,
         created_by=job.created_by,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+@router.get("/api/jobs/{job_id}/steps", response_model=list[AgentStepResponse])
+def get_job_steps(job_id: UUID, db: Session = Depends(get_db)) -> list[AgentStepResponse]:
+    job = db.get(JobModel, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    tasks = db.execute(
+        select(TaskModel)
+        .where(TaskModel.job_id == job_id)
+        .order_by(TaskModel.started_at.asc().nullsfirst(), TaskModel.id.asc())
+    ).scalars().all()
+    return [
+        AgentStepResponse(
+            id=t.id,
+            job_id=t.job_id,
+            step_name=t.task_type,
+            status=t.status.lower(),
+            started_at=t.started_at,
+            finished_at=t.finished_at,
+            output=t.output_payload_json or None,
+            error=t.error_message,
+        )
+        for t in tasks
+    ]
 
 
 @router.get("/api/jobs/{job_id}/artifacts")
@@ -165,9 +194,16 @@ async def stream_job_status(job_id: UUID):
             event_data = json.dumps({
                 "job_id": str(job_id),
                 "status": current_job.status if current_job else "unknown",
-                "tasks": [
-                    {"id": str(t.id), "task_type": t.task_type,
-                     "status": t.status}
+                "progress": current_job.progress if current_job else 0,
+                "steps": [
+                    {
+                        "id": str(t.id),
+                        "step_name": t.task_type,
+                        "status": t.status.lower(),
+                        "started_at": t.started_at.isoformat() if t.started_at else None,
+                        "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+                        "error": t.error_message,
+                    }
                     for t in tasks
                 ],
             })
