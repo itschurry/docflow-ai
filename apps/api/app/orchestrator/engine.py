@@ -13,6 +13,7 @@ from app.agents.registry import load_agent_registry
 from app.conversations.selectors import build_context_prompt
 from app.conversations.service import ConversationService
 from app.core.config import settings
+from app.orchestrator.dispatcher import LocalDispatcher
 from app.orchestrator.router import route
 from app.orchestrator.state_machine import ConversationStatus
 from app.orchestrator.validator import detect_progress, validate_dynamic_handoff
@@ -23,13 +24,6 @@ logger = logging.getLogger(__name__)
 _DYNAMIC_MODES = {"autonomous-lite", "autonomous"}
 _SUGGESTION_ALIASES = {
     "pm": "planner",
-}
-_IDENTITY_TO_HANDLE = {
-    "pm": "planner",
-    "writer": "writer",
-    "critic": "critic",
-    "qa": "qa",
-    "coder": "coder",
 }
 _ROLE_TO_HANDLE_ALIASES = {
     "pm": "planner",
@@ -86,16 +80,8 @@ class OrchestratorEngine:
 
     def _get_dispatcher(self):
         if self._dispatcher is None:
-            from app.adapters.telegram.dispatcher import BotDispatcher
-            from app.adapters.telegram.outbound import MultiBotOutbound
-            from app.adapters.telegram.registry import BotRegistry
-
-            reg = BotRegistry()
-            reg.load(settings.agent_config_path)
-            outbound = MultiBotOutbound(reg)
-            disp = BotDispatcher(reg, outbound)
-            disp.load(settings.agent_config_path)
-            self._dispatcher = disp
+            self._ensure_loaded()
+            self._dispatcher = LocalDispatcher(self._agents)
         return self._dispatcher
 
     @property
@@ -860,8 +846,11 @@ class OrchestratorEngine:
 
     def _resolve_handle_from_identity(self, inbound_identity: str | None) -> str:
         identity = (inbound_identity or "pm").strip().lower()
-        handle = _IDENTITY_TO_HANDLE.get(identity, "planner")
-        return handle if handle in self.agent_handles else "planner"
+        self._ensure_loaded()
+        for handle, agent in self._agents.items():
+            if (agent.config.identity or handle).lower() == identity:
+                return handle
+        return "planner" if "planner" in self.agent_handles else self._default_handle(self.agent_handles)
 
     def _build_mention_aliases(self, dispatcher) -> dict[str, str]:
         aliases: dict[str, str] = {}

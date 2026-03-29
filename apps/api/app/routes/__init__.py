@@ -1,12 +1,9 @@
 from fastapi import APIRouter
 
 from app.routes.health import router as health_router
-from app.routes.projects import router as projects_router
 from app.routes.files import router as files_router
 from app.routes.jobs import router as jobs_router
 from app.routes.web_knowledge import router as web_knowledge_router
-from app.routes.ops import router as ops_router
-from app.routes.telegram import router as telegram_router
 from app.routes.conversations import router as conversations_router
 from app.routes.web_runs import router as web_runs_router
 from app.routes.web_chats import router as web_chats_router
@@ -28,16 +25,12 @@ from app.routes.web_runs import (
     AnthropicSkillsDocumentGenerator,
     OpenAIDocumentIRGenerator,
 )
-from app.core.config import settings
 
 router = APIRouter()
 router.include_router(health_router)
-router.include_router(projects_router)
 router.include_router(files_router)
 router.include_router(jobs_router)
 router.include_router(web_knowledge_router)
-router.include_router(ops_router)
-router.include_router(telegram_router)
 router.include_router(conversations_router)
 router.include_router(web_runs_router)
 router.include_router(web_chats_router)

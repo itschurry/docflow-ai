@@ -1,85 +1,11 @@
-from pathlib import Path
-import threading
-import hashlib
-import hmac
-import json
 import re
-import shutil
-import uuid
-from uuid import UUID
+from pathlib import Path
 
-import asyncio
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Header, Query, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.database import SessionLocal, get_db
-from app.core.state_machine import JobStatus
-from app.core.time_utils import now_utc
-from app import conversation_models
-from app.models import DocumentChunkModel, FileModel, JobModel, ProjectModel, PromptLogModel, TaskModel
-from app.schemas.plan import PlanResult
-from app.schemas.request_response import (
-    ArtifactSummary,
-    CreateJobRequest,
-    CreateJobResponse,
-    CreateProjectRequest,
-    CreateProjectResponse,
-    CreateOpsApiKeyRequest,
-    CreateOpsApiKeyResponse,
-    JobDetailResponse,
-    DeadLetterItem,
-    DeadLetterListResponse,
-    DeadLetterReplayRequest,
-    DeadLetterReplayResponse,
-    JobHistoryItem,
-    ProjectJobsResponse,
-    PromptLogSummary,
-    ReplayAuditItem,
-    ReplayAuditListResponse,
-    TaskSummary,
-    UploadFileResponse,
-)
-from app.services.anthropic_skills import AnthropicSkillsDocumentGenerator
-from app.services.anthropic_skills import anthropic_skills_available
-from app.services.anthropic_skills import default_document_provider
-from app.services.document_ir import build_slides_ir
-from app.services.document_ir import build_sheet_ir_from_outline
-from app.services.document_ir import build_word_ir_from_markdown
-from app.services.document_ir import extract_text_from_ir
-from app.services.document_ir import parse_document_to_ir
-from app.services.document_ir import render_ir_to_docx_bytes
-from app.services.document_ir import render_ir_to_pptx_bytes
-from app.services.document_ir import render_ir_to_xlsx_bytes
-from app.services.document_ir import summarize_document_ir
-from app.services.job_dispatcher import dispatch_job
-from app.services.llm_router import get_llm_provider
-from app.services.openai_document_generator import OpenAIDocumentIRGenerator
-from app.services.openai_document_generator import openai_document_generation_available
-from app.services.planner_agent import PlannerAgent
-from app.adapters.telegram.handlers import process_update
-from app.adapters.telegram.dispatcher import DispatchResult
-from app.conversations.service import ConversationService
-from app.conversations.serializer import (
-    serialize_agent_run,
-    serialize_artifact,
-    serialize_conversation,
-    serialize_message,
-    serialize_team_activity,
-    serialize_team_dependency,
-    serialize_team_message,
-    serialize_team_run,
-    serialize_team_session,
-    serialize_team_task,
-)
-from app.orchestrator.engine import orchestrator
-from app.team_runtime.service import TeamRunService
-from app.services.indexing_service import index_file
-
-
+from app.models import FileModel, ProjectModel
+from app.services.document_ir import parse_document_to_ir, summarize_document_ir
 
 AUTO_REVIEW_MAX_ROUNDS = 2
 AUTO_REVIEW_MAX_ROUNDS_MIN = 1
@@ -132,9 +58,6 @@ OUTPUT_TYPE_PRESET_MAP = {
     "xlsx": "xlsx_analysis_team",
     "pptx": "presentation_team",
 }
-
-
-
 
 def _ensure_web_upload_project(db: Session) -> ProjectModel:
     project = (

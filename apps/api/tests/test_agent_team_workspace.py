@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.time_utils import now_utc
 from app.orchestrator.engine import orchestrator
-from app.adapters.telegram.dispatcher import DispatchResult
+from app.orchestrator.dispatcher import DispatchResult
 from app.agents.base import AgentResult
 from app.agents.base import BaseAgent
 from app.agents.base import AgentConfig
@@ -1416,6 +1416,7 @@ def test_base_agent_falls_back_to_openai_when_retryable_error(monkeypatch):
         handle="writer",
         display_name="writer",
         emoji="✍️",
+        identity="writer",
         provider="anthropic",
         model="claude-test",
         max_tokens=1000,
@@ -1454,6 +1455,7 @@ def test_base_agent_falls_back_to_openai_for_anthropic_api_errors(monkeypatch):
         handle="writer",
         display_name="writer",
         emoji="✍️",
+        identity="writer",
         provider="anthropic",
         model="claude-test",
         max_tokens=1000,
@@ -1474,15 +1476,8 @@ def test_base_agent_falls_back_to_openai_for_anthropic_api_errors(monkeypatch):
 
 def test_team_run_request_accepts_source_files_and_exposes_source_ir_summary(client):
     _ensure_schema()
-    project = client.post(
-        "/api/projects",
-        json={"name": "Source Files", "description": "team run"},
-    )
-    assert project.status_code == 200
-    project_id = project.json()["id"]
-
     upload = client.post(
-        f"/api/projects/{project_id}/files",
+        "/web/files",
         files={
             "uploaded_file": (
                 "source.docx",

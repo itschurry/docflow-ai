@@ -1,36 +1,5 @@
-# Agent configuration for DocFlow AI Multi-Agent Platform
-# telegram.bots: 각 봇의 토큰/유저명/표시명 정의
-# agents: 각 에이전트의 LLM 설정 + telegram identity 매핑
-
-telegram:
-  allowed_chat_ids: []   # 비어 있으면 전체 허용 (TELEGRAM_ALLOWED_CHAT_IDS env로 override)
-  inbound_identity: pm   # 메시지 수신 담당 봇 identity
-  bots:
-    pm:
-      token: ${TELEGRAM_PM_BOT_TOKEN}
-      username: IdocFlowPMBot
-      display_name: "Pipeline Architect"
-      emoji: "🏗️"
-    writer:
-      token: ${TELEGRAM_WRITER_BOT_TOKEN}
-      username: IdocFlowWriterBot
-      display_name: "작성 담당"
-      emoji: "✍️"
-    critic:
-      token: ${TELEGRAM_CRITIC_BOT_TOKEN}
-      username: IdocflowCriticBot
-      display_name: "검토 담당"
-      emoji: "🔍"
-    qa:
-      token: ${TELEGRAM_QA_BOT_TOKEN}
-      username: IdocflowQaBot
-      display_name: "품질 보증"
-      emoji: "✅"
-    coder:
-      token: ${TELEGRAM_CODER_BOT_TOKEN}
-      username: IdocflowCoderBot
-      display_name: "비활성화된 Coder"
-      emoji: "💻"
+# Agent configuration for the web-first DocFlow AI runtime.
+# identity: internal speaker identity used by the local dispatcher.
 
 agents:
   planner:

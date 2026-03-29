@@ -7,6 +7,7 @@ from typing import Any
 from app.services.llm_provider import (
     AnthropicProvider,
     LLMProvider,
+    OllamaProvider,
     OpenAIProvider,
     StubLLMProvider,
 )
@@ -18,6 +19,7 @@ class AgentConfig:
     handle: str
     display_name: str
     emoji: str
+    identity: str
     provider: str
     model: str
     max_tokens: int
@@ -57,6 +59,10 @@ def build_provider(provider: str, model: str) -> LLMProvider:
         return OpenAIProvider(api_key=settings.openai_api_key, model=model)
     if provider == "anthropic" and settings.anthropic_api_key:
         return AnthropicProvider(api_key=settings.anthropic_api_key, model=model)
+    if provider == "ollama":
+        resolved_model = model or settings.ollama_model
+        if resolved_model:
+            return OllamaProvider(model=resolved_model, host=settings.ollama_host)
     return StubLLMProvider()
 
 

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models import FileModel, ProjectModel
+from app.models import FileModel
 from app.schemas.request_response import UploadFileResponse
 from app.services.document_ir import extract_text_from_ir, parse_document_to_ir, summarize_document_ir
 from app.services.indexing_service import index_file
@@ -17,16 +17,11 @@ from app.routes._shared import _ensure_web_upload_project, _file_analysis_payloa
 router = APIRouter()
 
 
-@router.post("/api/projects/{project_id}/files", response_model=UploadFileResponse)
-def upload_file(
+def _store_uploaded_file(
     project_id: UUID,
-    uploaded_file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    uploaded_file: UploadFile,
+    db: Session,
 ) -> UploadFileResponse:
-    project = db.get(ProjectModel, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
     filename = uploaded_file.filename or "uploaded.bin"
 
     project_dir = Path(settings.upload_dir) / str(project_id)
@@ -82,7 +77,7 @@ def upload_web_file(
     db: Session = Depends(get_db),
 ) -> UploadFileResponse:
     project = _ensure_web_upload_project(db)
-    return upload_file(project.id, uploaded_file, db)
+    return _store_uploaded_file(project.id, uploaded_file, db)
 
 
 @router.get("/api/files/{file_id}/analysis")

@@ -8,7 +8,6 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.time_utils import now_utc
 from app import conversation_models
-from app.adapters.telegram.dispatcher import DispatchResult
 from app.conversations.service import ConversationService
 from app.conversations.serializer import (
     serialize_artifact,
@@ -16,6 +15,7 @@ from app.conversations.serializer import (
     serialize_message,
 )
 from app.orchestrator.engine import orchestrator
+from app.orchestrator.dispatcher import DispatchResult
 from app.team_runtime.service import TeamRunService
 from app.routes._shared import (
     _normalize_web_selected_agents,

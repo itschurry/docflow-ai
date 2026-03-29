@@ -47,10 +47,13 @@ def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
                 model = os.environ.get("OPENAI_MODEL", "")
             elif provider == "anthropic":
                 model = os.environ.get("ANTHROPIC_MODEL", "")
+            elif provider == "ollama":
+                model = os.environ.get("OLLAMA_MODEL", "")
         agent_cfg = AgentConfig(
             handle=handle,
             display_name=cfg.get("display_name", handle.capitalize()),
             emoji=cfg.get("emoji", "🤖"),
+            identity=str(cfg.get("identity", handle)).strip() or handle,
             provider=provider,
             model=model,
             max_tokens=cfg.get("max_tokens", 1500),

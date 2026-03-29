@@ -11,9 +11,10 @@ UPLOAD_PATH = Path("./test_storage")
 # Ensure settings singleton reads test env values during import/collection time.
 os.environ["DATABASE_URL"] = f"sqlite:///{DB_PATH}"
 os.environ["AUTO_CREATE_TABLES"] = "true"
-os.environ["EXECUTION_BACKEND"] = "inline"
 os.environ["UPLOAD_DIR"] = str(UPLOAD_PATH)
 os.environ["LLM_PROVIDER"] = "stub"
+os.environ["OLLAMA_HOST"] = "http://localhost:11434"
+os.environ["OLLAMA_MODEL"] = "qwen-test"
 
 
 def _cleanup_sqlite_files(path: Path) -> None:
