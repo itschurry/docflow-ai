@@ -24,7 +24,9 @@ from app.routes import _normalize_presentation_final_content
 from app.routes import _presentation_user_visible_markdown
 from app.routes import _task_execution_contract
 from app.routes import _coerce_team_tasks
+from app.routes.web_runs import _recover_interrupted_team_run_state
 from app.services.file_generators import generate_report_docx
+from app.team_runtime.service import TeamRunService
 
 
 def _ensure_schema() -> None:
@@ -241,6 +243,88 @@ def test_team_run_review_mode_validation(client):
     )
     assert bad_create.status_code == 400
     assert "review_mode" in bad_create.text
+
+
+def test_recover_interrupted_team_run_state_reopens_stale_claims(client):
+    _ensure_schema()
+    with SessionLocal() as db:
+        team_svc = TeamRunService(db)
+        run = team_svc.create_run(
+            conversation_id=None,
+            title="Interrupted Run",
+            mode="team-autonomous",
+            requested_by="tester",
+            status="blocked",
+        )
+        planner = team_svc.create_session(
+            team_run_id=run.id,
+            handle="planner",
+            role="leader",
+            status="busy",
+        )
+        critic = team_svc.create_session(
+            team_run_id=run.id,
+            handle="critic",
+            role="worker",
+            status="idle",
+        )
+        stale_task = team_svc.create_task(
+            team_run_id=run.id,
+            title="Stale Follow-up",
+            description="resume me",
+            owner_handle="planner",
+            artifact_goal="decision",
+            status="todo",
+            claim_status="open",
+        )
+        blocked_task = team_svc.create_task(
+            team_run_id=run.id,
+            title="Blocked Review",
+            description="stay blocked",
+            owner_handle="critic",
+            artifact_goal="review_notes",
+            status="blocked",
+            claim_status="blocked",
+        )
+        team_svc.claim_task(task_id=stale_task.id, session_id=planner.id)
+        team_svc.update_task(stale_task.id, status="in_progress")
+        planner.current_task_id = stale_task.id
+        planner.status = "busy"
+        blocked_task.claimed_by_session_id = critic.id
+        blocked_task.claim_status = "blocked"
+        blocked_task.status = "blocked"
+        critic.current_task_id = blocked_task.id
+        critic.status = "busy"
+        db.commit()
+
+        changed = _recover_interrupted_team_run_state(
+            db=db,
+            team_svc=team_svc,
+            team_run_id=run.id,
+        )
+
+        assert changed is True
+        refreshed_stale = team_svc.get_task(stale_task.id)
+        refreshed_blocked = team_svc.get_task(blocked_task.id)
+        refreshed_planner = team_svc.get_session(planner.id)
+        refreshed_critic = team_svc.get_session(critic.id)
+
+        assert refreshed_stale is not None
+        assert refreshed_stale.status == "todo"
+        assert refreshed_stale.claim_status == "open"
+        assert refreshed_stale.claimed_by_session_id is None
+
+        assert refreshed_blocked is not None
+        assert refreshed_blocked.status == "blocked"
+        assert refreshed_blocked.claim_status == "blocked"
+
+        assert refreshed_planner is not None
+        assert refreshed_planner.status == "idle"
+        assert refreshed_planner.current_task_id is None
+
+        assert refreshed_critic is not None
+        assert refreshed_critic.status == "idle"
+        assert refreshed_critic.current_task_id is None
 
 
 def test_team_run_bootstrap_exposes_sessions_and_inbox(client):

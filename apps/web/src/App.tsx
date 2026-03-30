@@ -156,17 +156,31 @@ export default function App() {
   useEffect(() => {
     if (!activeRunId) { setBoard(null); return; }
     let cancelled = false;
+    let timeoutId: number | null = null;
+    let inFlight = false;
     const fetchBoard = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
         const data = await getBoard(activeRunId);
         if (!cancelled) setBoard(data);
-      } catch {
-        if (!cancelled) setError("워크스페이스 동기화 실패");
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "워크스페이스 동기화 실패";
+          setError(`워크스페이스 동기화 실패: ${msg}`);
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled) {
+          timeoutId = window.setTimeout(() => { void fetchBoard(); }, 3000);
+        }
       }
     };
     void fetchBoard();
-    const interval = window.setInterval(() => { void fetchBoard(); }, 3000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    };
   }, [activeRunId]);
 
   const selectedTask = useMemo<TeamTask | undefined>(
@@ -352,8 +366,13 @@ export default function App() {
         setFiles((prev) => [...prev, item]);
       }
       void refreshKnowledge();
-    } catch {
-      setError("파일 업로드 실패");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "파일 업로드 실패";
+      if (msg.includes("413")) {
+        setError("파일 업로드 실패: 파일 크기가 업로드 한도를 초과했습니다.");
+      } else {
+        setError(`파일 업로드 실패: ${msg}`);
+      }
     } finally {
       event.target.value = "";
     }

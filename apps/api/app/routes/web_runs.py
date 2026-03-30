@@ -105,6 +105,7 @@ OpenAIDocumentIRGenerator = _RouteProxy(
 )
 
 router = APIRouter()
+_RUN_SCHEDULER_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _normalize_oversight_mode(value: object | None) -> str:
@@ -3070,7 +3071,6 @@ def _build_team_board_snapshot(db: Session, run: conversation_models.TeamRunMode
                 "mime_type": file_row.mime_type,
                 "document_type": analysis["document_type"],
                 "document_summary": analysis["document_summary"],
-                "document_ir": analysis["document_ir"],
                 "chunk_count": chunk_counts.get(str(file_row.id), {}).get("chunk_count", 0),
                 "index_status": chunk_counts.get(str(file_row.id), {}).get("index_status", "not_indexed"),
             }
@@ -3986,14 +3986,100 @@ async def _maybe_auto_review_task(
 async def _bg_run_scheduler(team_run_id: uuid.UUID) -> None:
     """Background-safe scheduler wrapper: creates its own DB session so the
     HTTP response can be returned immediately while AI tasks run asynchronously."""
+    run_key = str(team_run_id)
+    scheduler_lock = _RUN_SCHEDULER_LOCKS.setdefault(run_key, asyncio.Lock())
+    if scheduler_lock.locked():
+        return
     db = SessionLocal()
     try:
-        await _run_team_scheduler(db, team_run_id)
+        async with scheduler_lock:
+            team_svc = TeamRunService(db)
+            _recover_interrupted_team_run_state(db=db, team_svc=team_svc, team_run_id=team_run_id)
+            await _run_team_scheduler(db, team_run_id)
     except Exception:
         import traceback
         traceback.print_exc()
     finally:
         db.close()
+        if not scheduler_lock.locked():
+            _RUN_SCHEDULER_LOCKS.pop(run_key, None)
+
+
+def _recover_interrupted_team_run_state(
+    *,
+    db: Session,
+    team_svc: TeamRunService,
+    team_run_id: uuid.UUID,
+) -> bool:
+    """Release stale in-process task/session state left behind by a restart."""
+    tasks = team_svc.list_tasks(team_run_id)
+    sessions = team_svc.list_sessions(team_run_id)
+    if not tasks and not sessions:
+        return False
+
+    tasks_by_id = {task.id: task for task in tasks}
+    sessions_by_id = {session.id: session for session in sessions}
+    changed = False
+
+    for task in tasks:
+        if task.status == "blocked" or task.claim_status == "blocked":
+            continue
+        if task.status != "in_progress" and task.claim_status != "claimed":
+            continue
+
+        if task.claimed_by_session_id:
+            team_svc.release_task_claim(task.id, reset_status="open")
+        reopened = team_svc.update_task(
+            task.id,
+            status="todo",
+            claim_status="open",
+            claimed_by_session_id=None,
+            claim_expires_at=None,
+        )
+        if reopened:
+            changed = True
+
+    for session in sessions:
+        current_task = tasks_by_id.get(session.current_task_id) if session.current_task_id else None
+        if session.status != "busy" and not session.current_task_id:
+            continue
+        if (
+            current_task is not None
+            and current_task.status == "in_progress"
+            and current_task.claim_status == "claimed"
+            and current_task.claimed_by_session_id == session.id
+        ):
+            continue
+        updated = team_svc.update_session(
+            session.id,
+            status="idle",
+            current_task_id=None,
+        )
+        if updated:
+            changed = True
+
+    if changed:
+        db.commit()
+    return changed
+
+
+async def recover_team_runs_on_startup() -> None:
+    """Normalize interrupted runtime state and resume recoverable runs."""
+    db = SessionLocal()
+    resumable_run_ids: list[uuid.UUID] = []
+    try:
+        team_svc = TeamRunService(db)
+        for run in team_svc.list_runs(limit=200):
+            if run.status in {"done", "done_with_risks"}:
+                continue
+            _recover_interrupted_team_run_state(db=db, team_svc=team_svc, team_run_id=run.id)
+            if run.plan_status == "approved" and run.status in {"queued", "active", "running", "awaiting_review"}:
+                resumable_run_ids.append(run.id)
+    finally:
+        db.close()
+
+    for run_id in resumable_run_ids:
+        asyncio.create_task(_bg_run_scheduler(run_id))
 
 
 async def _run_team_scheduler(
