@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 apps/api/.venv
 .env
+.env.bak
 
 # OS
 .DS_Store

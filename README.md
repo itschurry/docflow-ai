@@ -24,8 +24,8 @@ cp apps/api/.env.example apps/api/.env
 docker compose up --build
 ```
 
-- Web UI: `http://localhost:8080`
-- API health: `http://localhost:8000/health`
+- Web UI: `http://localhost:8082`
+- API health: `http://localhost:8002/health`
 
 The API container runs Alembic migrations on startup and stores the SQLite DB at `storage/db/docflow.db`.
 
