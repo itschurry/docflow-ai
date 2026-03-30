@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.storage_paths import absolute_storage_path, storage_path_for_db
 from app.models import FileModel
 from app.schemas.request_response import UploadFileResponse
 from app.services.document_ir import extract_text_from_ir, parse_document_to_ir, summarize_document_ir
@@ -41,7 +42,7 @@ def _store_uploaded_file(
         project_id=project_id,
         job_id=None,
         original_name=filename,
-        stored_path=str(stored_path),
+        stored_path=storage_path_for_db(stored_path),
         mime_type=uploaded_file.content_type or "application/octet-stream",
         size=size,
         source_type="upload",
@@ -109,7 +110,7 @@ def download_file(file_id: UUID, db: Session = Depends(get_db)) -> FileResponse:
     if not file_row:
         raise HTTPException(status_code=404, detail="File not found")
 
-    file_path = Path(file_row.stored_path)
+    file_path = absolute_storage_path(file_row.stored_path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Stored file not found")
 

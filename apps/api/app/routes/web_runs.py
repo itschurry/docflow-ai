@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal, get_db
+from app.core.storage_paths import storage_path_for_db
 from app.core.time_utils import now_utc
 from app import conversation_models
 from app.conversations.service import ConversationService
@@ -276,7 +277,7 @@ def _persist_team_export_file(
         project_id=project.id,
         job_id=None,
         original_name=filename,
-        stored_path=str(stored_path),
+        stored_path=storage_path_for_db(stored_path),
         mime_type=mime_type,
         size=stored_path.stat().st_size,
         source_type="generated",

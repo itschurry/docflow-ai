@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.core.database import SessionLocal
 from app.core.state_machine import JobStatus
 from app.core.config import settings
+from app.core.storage_paths import storage_path_for_db
 from app.core.time_utils import now_utc
 from app.models import FileModel, JobModel, PromptLogModel, TaskModel
 from app.services.document_ir import parse_document_to_ir
@@ -80,7 +81,7 @@ def _persist_generated_file(
         project_id=job.project_id,
         job_id=job.id,
         original_name=filename,
-        stored_path=str(stored_path),
+        stored_path=storage_path_for_db(stored_path),
         mime_type=mime_type,
         size=stored_path.stat().st_size,
         source_type="generated",

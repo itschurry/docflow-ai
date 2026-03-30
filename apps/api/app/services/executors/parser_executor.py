@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from app.core.storage_paths import absolute_storage_path
 from app.models import FileModel, JobModel
 from app.services.document_ir import extract_text_from_ir
 from app.services.document_ir import parse_document_to_ir
@@ -21,7 +22,7 @@ def run_parse_reference_docs(db, job: JobModel, ctx: ExecutionContext) -> dict:
     for f in ref_files:
         text = f.extracted_text or ""
         if not text and f.stored_path:
-            document_ir = parse_document_to_ir(f.stored_path, f.mime_type)
+            document_ir = parse_document_to_ir(str(absolute_storage_path(f.stored_path)), f.mime_type)
             text = extract_text_from_ir(document_ir)
             if document_ir:
                 f.document_type = str(document_ir.get("document_type") or f.document_type or "")

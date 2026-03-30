@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.storage_paths import absolute_storage_path
 from app.models import FileModel, ProjectModel
 from app.services.document_ir import parse_document_to_ir, summarize_document_ir
 
@@ -77,7 +78,7 @@ def _ensure_web_upload_project(db: Session) -> ProjectModel:
 
 
 def _file_analysis_payload(file_row: FileModel) -> dict:
-    file_ir = parse_document_to_ir(file_row.stored_path, file_row.mime_type)
+    file_ir = parse_document_to_ir(str(absolute_storage_path(file_row.stored_path)), file_row.mime_type)
     summary = summarize_document_ir(file_ir)
     return {
         "document_type": str(file_ir.get("document_type") or file_row.document_type or ""),

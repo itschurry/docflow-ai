@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from app.core.storage_paths import absolute_storage_path
 from app.models import DocumentChunkModel, FileModel, StylePatternModel
 from app.services.chunking_service import chunk_from_ir, chunk_from_text
 from app.services.document_ir import extract_text_from_ir, parse_document_to_ir
@@ -38,7 +39,7 @@ def index_file(file_row: FileModel, db: Session) -> dict:
         # 문서 파싱 → IR
         if file_row.stored_path:
             try:
-                ir = parse_document_to_ir(file_row.stored_path, file_row.mime_type)
+                ir = parse_document_to_ir(str(absolute_storage_path(file_row.stored_path)), file_row.mime_type)
                 chunks = chunk_from_ir(ir, file_name=file_row.original_name)
             except Exception as parse_err:
                 log.warning("IR parsing failed for %s: %s", file_row.id, parse_err)
