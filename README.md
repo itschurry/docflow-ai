@@ -17,6 +17,17 @@ DocFlow AI is now a web-first document workspace built around `FastAPI + React +
 
 For Docker, the default Ollama host is `http://host.docker.internal:11434`.
 
+Per-agent overrides are also supported through `apps/api/.env`:
+
+- `AGENT_PLANNER_PROVIDER`, `AGENT_PLANNER_MODEL`
+- `AGENT_WRITER_PROVIDER`, `AGENT_WRITER_MODEL`
+- `AGENT_CRITIC_PROVIDER`, `AGENT_CRITIC_MODEL`
+- `AGENT_QA_PROVIDER`, `AGENT_QA_MODEL`
+- `AGENT_MANAGER_PROVIDER`, `AGENT_MANAGER_MODEL`
+
+If only `AGENT_<HANDLE>_PROVIDER` is set, the runtime will automatically use that provider's default model from `OPENAI_MODEL`, `ANTHROPIC_MODEL`, or `OLLAMA_MODEL`.
+The override values can also reference other env vars, for example `AGENT_PLANNER_MODEL=${OPENAI_MODEL}`.
+
 ## Docker Start
 
 ```bash

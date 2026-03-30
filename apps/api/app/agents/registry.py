@@ -40,15 +40,8 @@ def load_agent_registry(config_path: str) -> dict[str, BaseAgent]:
     for handle, cfg in raw.get("agents", {}).items():
         if not cfg.get("enabled", True):
             continue
-        provider = _resolve_env(str(cfg.get("provider", "stub"))).strip().lower()
-        model = _resolve_env(str(cfg.get("model", ""))).strip()
-        if not model:
-            if provider == "openai":
-                model = os.environ.get("OPENAI_MODEL", "")
-            elif provider == "anthropic":
-                model = os.environ.get("ANTHROPIC_MODEL", "")
-            elif provider == "ollama":
-                model = os.environ.get("OLLAMA_MODEL", "")
+        provider = _resolve_agent_provider(handle, cfg)
+        model = _resolve_agent_model(handle, cfg, provider)
         agent_cfg = AgentConfig(
             handle=handle,
             display_name=cfg.get("display_name", handle.capitalize()),
@@ -71,3 +64,45 @@ def _resolve_env(value: str) -> str:
     def replacer(m: re.Match) -> str:
         return os.environ.get(m.group(1), "")
     return re.sub(r"\$\{([^}]+)\}", replacer, value)
+
+
+def _agent_env_name(handle: str, suffix: str) -> str:
+    return f"AGENT_{handle.strip().upper()}_{suffix.strip().upper()}"
+
+
+def _agent_env_value(handle: str, suffix: str) -> str:
+    return _resolve_env(os.environ.get(_agent_env_name(handle, suffix), ""))
+
+
+def _resolve_agent_provider(handle: str, cfg: dict) -> str:
+    override = _agent_env_value(handle, "provider").strip().lower()
+    if override:
+        return override
+    provider = _resolve_env(str(cfg.get("provider", "stub"))).strip().lower()
+    return provider or "stub"
+
+
+def _default_model_for_provider(provider: str) -> str:
+    normalized = str(provider or "").strip().lower()
+    if normalized == "openai":
+        return os.environ.get("OPENAI_MODEL", "")
+    if normalized == "anthropic":
+        return os.environ.get("ANTHROPIC_MODEL", "")
+    if normalized == "ollama":
+        return os.environ.get("OLLAMA_MODEL", "")
+    return ""
+
+
+def _resolve_agent_model(handle: str, cfg: dict, provider: str) -> str:
+    override = _agent_env_value(handle, "model").strip()
+    if override:
+        return override
+
+    provider_override = _agent_env_value(handle, "provider").strip()
+    if provider_override:
+        return _default_model_for_provider(provider)
+
+    model = _resolve_env(str(cfg.get("model", ""))).strip()
+    if model:
+        return model
+    return _default_model_for_provider(provider)

@@ -724,6 +724,8 @@ class OrchestratorEngine:
             validation_result={"reason": validation_reason},
             fallback_applied=fallback_applied,
             progress_detected=progress_detected,
+            provider=result.provider,
+            model=result.model,
             termination_reason=termination_reason,
         )
 

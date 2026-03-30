@@ -292,6 +292,8 @@ class ConversationService:
         validation_result: dict | None = None,
         fallback_applied: bool = False,
         progress_detected: bool = False,
+        provider: str | None = None,
+        model: str | None = None,
         termination_reason: str | None = None,
     ) -> AgentRunModel | None:
         run = self.db.get(AgentRunModel, run_id)
@@ -308,6 +310,10 @@ class ConversationService:
             run.validation_result = validation_result
             run.fallback_applied = fallback_applied
             run.progress_detected = progress_detected
+            if provider is not None:
+                run.provider = provider
+            if model is not None:
+                run.model = model
             run.termination_reason = termination_reason
             if output_message_id is not None:
                 run.output_message_id = output_message_id
